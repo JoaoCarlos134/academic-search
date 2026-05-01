@@ -1,0 +1,24 @@
+[project]
+name = "academic-search"
+version = "0.1.0"
+description = "Local academic search engine"
+requires-python = ">=3.11"
+
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "sqlalchemy>=2.0",
+    "sentence-transformers>=3.0",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.scripts]
+search = "src.cli:app"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
