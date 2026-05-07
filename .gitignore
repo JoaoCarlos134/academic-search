@@ -1,6 +1,21 @@
-.venv/
+# Secrets
 .env
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.uv/
+
+# Database/cache local
 *.db
-.ruff_cache/
+*.sqlite
+
+# VS Code
+.vscode/
+
+# OS
+Thumbs.db
