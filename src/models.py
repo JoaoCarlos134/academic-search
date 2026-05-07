@@ -14,6 +14,11 @@ class Article:
     url: Optional[str]
     citations: int = 0
     score: float = 0.0
+    venue_type: str | None = None       # "journal" | "conference" | "repository" | "book" | "other"
+    publisher: str | None = None
+    is_oa: bool | None = None
+    oa_url: str | None = None
+    concepts: list[str] | None = None
 
     def __hash__(self):
         return hash(self.doi or self.title)

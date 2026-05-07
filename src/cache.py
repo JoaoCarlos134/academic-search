@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, delete, select
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, create_engine, delete, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from src.models import Article
@@ -32,9 +32,38 @@ class _CachedArticle(_Base):
     url = Column(String, nullable=True)
     citations = Column(Integer, nullable=False, default=0)
     score = Column(Float, nullable=False, default=0.0)
+    venue_type = Column(String, nullable=True)
+    publisher = Column(String, nullable=True)
+    is_oa = Column(Boolean, nullable=True)
+    oa_url = Column(String, nullable=True)
+    concepts = Column(Text, nullable=True)  # JSON-encoded list[str] | None
 
 
 _Base.metadata.create_all(_engine)
+_EXTRA_COLS = {
+    "venue_type": "VARCHAR",
+    "publisher": "VARCHAR",
+    "is_oa": "BOOLEAN",
+    "oa_url": "VARCHAR",
+    "concepts": "TEXT",
+}
+
+
+def _migrate() -> None:
+    """Add columns introduced after initial schema creation."""
+    if "article_cache" not in inspect(_engine).get_table_names():
+        return
+    existing = {c["name"] for c in inspect(_engine).get_columns("article_cache")}
+    missing = {col: typ for col, typ in _EXTRA_COLS.items() if col not in existing}
+    if not missing:
+        return
+    with _engine.connect() as conn:
+        for col, typ in missing.items():
+            conn.execute(text(f"ALTER TABLE article_cache ADD COLUMN {col} {typ}"))
+        conn.commit()
+
+
+_migrate()
 
 
 def get(query: str) -> list[Article] | None:
@@ -69,6 +98,11 @@ def set(query: str, articles: list[Article]) -> None:
                     url=article.url,
                     citations=article.citations,
                     score=article.score,
+                    venue_type=article.venue_type,
+                    publisher=article.publisher,
+                    is_oa=article.is_oa,
+                    oa_url=article.oa_url,
+                    concepts=json.dumps(article.concepts) if article.concepts is not None else None,
                 )
             )
         session.commit()
@@ -86,4 +120,9 @@ def _to_article(row: _CachedArticle) -> Article:
         url=row.url,
         citations=row.citations,
         score=row.score,
+        venue_type=row.venue_type,
+        publisher=row.publisher,
+        is_oa=row.is_oa,
+        oa_url=row.oa_url,
+        concepts=json.loads(row.concepts) if row.concepts is not None else None,
     )

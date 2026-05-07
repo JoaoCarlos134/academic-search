@@ -12,6 +12,13 @@ BASE_URL = "https://api.elsevier.com/content/search/scopus"
 _API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 _INST_TOKEN = os.getenv("ELSEVIER_INST_TOKEN", "")
 
+_VENUE_TYPE_MAP = {
+    "journal": "journal",
+    "trade journal": "journal",
+    "conference proceeding": "conference",
+    "book series": "book",
+}
+
 
 async def search(query: str, limit: int = 20) -> list[Article]:
     if not _API_KEY:
@@ -25,7 +32,11 @@ async def search(query: str, limit: int = 20) -> list[Article]:
     params = {
         "query": query,
         "count": limit,
-        "field": "dc:title,prism:doi,prism:coverDate,dc:description,author,prism:publicationName,citedby-count,prism:url",
+        "field": (
+            "dc:title,prism:doi,prism:coverDate,dc:description,"
+            "author,prism:publicationName,citedby-count,prism:url,"
+            "subtypeDescription,openaccess"
+        ),
     }
 
     async with httpx.AsyncClient(timeout=15) as client:
@@ -46,6 +57,11 @@ async def search(query: str, limit: int = 20) -> list[Article]:
                 source="elsevier",
                 url=entry.get("prism:url"),
                 citations=int(entry.get("citedby-count") or 0),
+                venue_type=_extract_venue_type(entry.get("subtypeDescription")),
+                publisher=None,
+                is_oa=_extract_oa(entry.get("openaccess")),
+                oa_url=None,
+                concepts=None,
             )
         )
 
@@ -64,3 +80,15 @@ def _extract_year(cover_date: Optional[str]) -> Optional[int]:
 
 def _extract_authors(authors: list) -> list[str]:
     return [a["authname"] for a in authors if a.get("authname")][:5]
+
+
+def _extract_venue_type(subtype: Optional[str]) -> str:
+    if not subtype:
+        return "other"
+    return _VENUE_TYPE_MAP.get(subtype.lower(), "other")
+
+
+def _extract_oa(raw: Optional[str | int]) -> Optional[bool]:
+    if raw is None:
+        return None
+    return str(raw) == "1"
