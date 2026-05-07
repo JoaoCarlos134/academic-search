@@ -56,9 +56,10 @@ def _extract_year(cover_date: Optional[str]) -> Optional[int]:
     if not cover_date:
         return None
     try:
-        return int(cover_date[:4])
+        year = int(cover_date[:4])
     except (ValueError, IndexError):
         return None
+    return year if 1000 <= year <= 2025 else None
 
 
 def _extract_authors(authors: list) -> list[str]:

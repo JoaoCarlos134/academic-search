@@ -1,6 +1,6 @@
-import math as math
-
+import math
 from datetime import datetime
+from typing import Optional
 
 from src.models import Article
 
@@ -20,12 +20,27 @@ WEIGHTS = {
     "citations": 0.15,
 }
 
+_model = None
+_model_loaded = False
+
+
+def _get_model():
+    global _model, _model_loaded
+    if _model_loaded:
+        return _model
+    try:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    except Exception:
+        _model = None
+    _model_loaded = True
+    return _model
+
 
 def score_articles(articles: list[Article], query: str) -> list[Article]:
     if not articles:
         return []
 
-    # calcula scores brutos
     similarities = _compute_similarity(articles, query)
     recencies = [_recency_score(a.year) for a in articles]
     sources = [SOURCE_WEIGHTS.get(a.source, 0.7) for a in articles]
@@ -43,7 +58,23 @@ def score_articles(articles: list[Article], query: str) -> list[Article]:
 
 
 def _compute_similarity(articles: list[Article], query: str) -> list[float]:
-    """Similaridade simples por palavras-chave (sem GPU necessário)."""
+    model = _get_model()
+    if model is not None:
+        return _embedding_similarity(articles, query, model)
+    return _keyword_similarity(articles, query)
+
+
+def _embedding_similarity(articles: list[Article], query: str, model) -> list[float]:
+    texts = [f"{a.title} {a.abstract or ''}" for a in articles]
+    query_emb, *doc_embs = model.encode([query] + texts, convert_to_tensor=True)
+    scores = [float(model.similarity(query_emb, d)) for d in doc_embs]
+    # similarity() returns [-1, 1]; shift to [0, 1]
+    scores = [(s + 1) / 2 for s in scores]
+    max_s = max(scores) if max(scores) > 0 else 1
+    return [s / max_s for s in scores]
+
+
+def _keyword_similarity(articles: list[Article], query: str) -> list[float]:
     query_words = set(query.lower().split())
     scores = []
     for article in articles:
@@ -54,13 +85,11 @@ def _compute_similarity(articles: list[Article], query: str) -> list[float]:
             continue
         overlap = len(query_words & text_words)
         scores.append(overlap / len(query_words))
-
-    # normaliza entre 0 e 1
     max_s = max(scores) if max(scores) > 0 else 1
     return [s / max_s for s in scores]
 
 
-def _recency_score(year: int | None) -> float:
+def _recency_score(year: Optional[int]) -> float:
     if not year:
         return 0.3
     age = CURRENT_YEAR - year
