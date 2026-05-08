@@ -178,11 +178,8 @@ def _ref_row(article: Article) -> list:
 
 
 def _to_ref_tsv(articles: list[Article]) -> str:
-    buf = io.StringIO()
-    buf.write("\t".join(_REF_HEADERS) + "\n")
-    for a in articles:
-        buf.write("\t".join(str(v) for v in _ref_row(a)) + "\n")
-    return buf.getvalue()
+    lines = ["\t".join(str(v) for v in _ref_row(a)) for a in articles]
+    return "\n".join(lines)
 
 
 def _to_ref_xlsx(articles: list[Article]) -> bytes:
@@ -448,8 +445,13 @@ def _app() -> None:
         st.divider()
 
         if fmt == "TSV para Excel (colar direto na planilha)":
-            st.write("Copie o texto abaixo e cole no Excel com Ctrl+V")
-            st.code(_to_ref_tsv(selected_list), language=None)
+            st.write("Copie o texto abaixo e cole na primeira linha vazia da sua planilha")
+            st.text_area(
+                label="",
+                value=_to_ref_tsv(selected_list),
+                height=200,
+                key="tsv_output",
+            )
             st.caption(
                 "O campo Conteudo e o abstract original. Revise e adapte para o "
                 "seu resumo em portugues antes de colar na planilha."
