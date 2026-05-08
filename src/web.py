@@ -30,27 +30,42 @@ from src.providers.elsevier import search as elsevier_search
 from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
 from src.ranking import score_articles
+from src.utils import dedup_articles
 
 
 # ── async orchestrator (same logic as cli.py) ─────────────────────────────────
 
-async def _search_all(query: str, limit: int) -> list[Article]:
-    openalex, elsevier, ieee = await asyncio.gather(
+_PROVIDER_NAMES = ("openalex", "elsevier", "ieee")
+
+
+async def _search_all(query: str, limit: int) -> tuple[list[Article], list[str]]:
+    """Return (deduplicated articles, list of provider names that failed)."""
+    raw = await asyncio.gather(
         openalex_search(query, limit),
         elsevier_search(query, limit),
         ieee_search(query, limit),
+        return_exceptions=True,
     )
-    return openalex + elsevier + ieee
+    articles: list[Article] = []
+    failed: list[str] = []
+    for name, result in zip(_PROVIDER_NAMES, raw):
+        if isinstance(result, BaseException):
+            failed.append(name)
+            print(f"[{name}] provider failed: {result}")
+            continue
+        articles.extend(result)
+    return dedup_articles(articles), failed
 
 
-def _fetch(query: str, limit: int) -> tuple[list[Article], bool]:
+def _fetch(query: str, limit: int) -> tuple[list[Article], bool, list[str]]:
+    """Returns (articles, from_cache, failed_providers)."""
     cached = cache.get(query)
     if cached is not None:
-        return cached, True
-    articles = asyncio.run(_search_all(query, limit))
+        return cached, True, []
+    articles, failed = asyncio.run(_search_all(query, limit))
     ranked = score_articles(articles, query)
     cache.set(query, ranked)
-    return ranked, False
+    return ranked, False, failed
 
 
 # ── shared field helpers ───────────────────────────────────────────────────────
@@ -105,11 +120,19 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def _tsv_clean(value) -> str:
+    """Replace tab/newline chars so a single field never breaks the row layout."""
+    if value is None:
+        return ""
+    s = str(value)
+    return s.replace("\t", " ").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
+
 def _to_tsv_str(articles: list[Article]) -> str:
     buf = io.StringIO()
     buf.write("titulo\tano\tautores\tvenue\tdoi\tcitacoes\tscore\tfonte\n")
     for a in articles:
-        buf.write("\t".join([
+        buf.write("\t".join(_tsv_clean(v) for v in [
             a.title or "",
             str(a.year) if a.year else "",
             "; ".join(a.authors),
@@ -185,7 +208,7 @@ def _ref_row(article: Article) -> list:
 
 
 def _to_ref_tsv(articles: list[Article]) -> str:
-    lines = ["\t".join(str(v) for v in _ref_row(a)) for a in articles]
+    lines = ["\t".join(_tsv_clean(v) for v in _ref_row(a)) for a in articles]
     return "\n".join(lines)
 
 
@@ -308,12 +331,13 @@ def _app() -> None:
             else:
                 with st.spinner("Buscando..."):
                     try:
-                        results, from_cache = _fetch(query.strip(), limit)
+                        results, from_cache, failed = _fetch(query.strip(), limit)
                         hidden = get_hidden_dois()
                         visible = [a for a in results if _hide_key(a) not in hidden]
                         st.session_state.results = visible
                         st.session_state.hidden_count = len(results) - len(visible)
                         st.session_state.from_cache = from_cache
+                        st.session_state.failed_providers = failed
                         st.session_state.search_error = None
                     except httpx.TimeoutException:
                         st.session_state.results = []
@@ -351,6 +375,12 @@ def _app() -> None:
                         hidden_count = st.session_state.get("hidden_count", 0)
                         if hidden_count:
                             st.caption(f"{hidden_count} artigo(s) oculto(s) nesta busca")
+                        failed = st.session_state.get("failed_providers") or []
+                        if failed:
+                            st.warning(
+                                f"Provedores indisponiveis nesta busca: {', '.join(failed)}. "
+                                f"Resultados parciais retornados."
+                            )
                     with export_col:
                         st.download_button(
                             label="Exportar CSV",
@@ -484,10 +514,11 @@ def _app() -> None:
             if fmt == "TSV para Excel (colar direto na planilha)":
                 st.write("Copie o texto abaixo e cole na primeira linha vazia da sua planilha")
                 st.text_area(
-                    label="",
+                    label="TSV para colar na planilha",
                     value=_to_ref_tsv(selected_list),
                     height=200,
                     key="tsv_output",
+                    label_visibility="collapsed",
                 )
                 st.caption(
                     "O campo Conteudo e o abstract original. Revise e adapte para o "

@@ -15,6 +15,7 @@ from src.providers.elsevier import search as elsevier_search
 from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
 from src.ranking import score_articles
+from src.utils import dedup_articles
 
 app = typer.Typer()
 console = Console()
@@ -56,13 +57,20 @@ def main(
         _display_results(results)
 
 
-async def _search_all(query: str, limit: int):
-    openalex, elsevier, ieee = await asyncio.gather(
+async def _search_all(query: str, limit: int) -> list[Article]:
+    raw = await asyncio.gather(
         openalex_search(query, limit),
         elsevier_search(query, limit),
         ieee_search(query, limit),
+        return_exceptions=True,
     )
-    return openalex + elsevier + ieee
+    articles: list[Article] = []
+    for name, result in zip(("openalex", "elsevier", "ieee"), raw):
+        if isinstance(result, BaseException):
+            console.print(f"[yellow]Aviso: provedor {name} falhou ({result}). Continuando sem ele.[/yellow]")
+            continue
+        articles.extend(result)
+    return dedup_articles(articles)
 
 
 def _display_results(articles: list[Article]):
