@@ -1,11 +1,10 @@
 import os
 from typing import Optional
 
-import httpx
 from dotenv import load_dotenv
 
 from src.models import Article
-from src.utils import ssl_verify
+from src.utils import http_get
 
 load_dotenv()
 
@@ -40,10 +39,9 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         ),
     }
 
-    async with httpx.AsyncClient(timeout=15, verify=ssl_verify()) as client:
-        response = await client.get(BASE_URL, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+    response = await http_get(BASE_URL, params=params, headers=headers)
+    response.raise_for_status()
+    data = response.json()
 
     articles = []
     for entry in data.get("search-results", {}).get("entry", []):
