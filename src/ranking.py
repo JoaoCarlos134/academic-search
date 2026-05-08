@@ -47,11 +47,16 @@ def score_articles(articles: list[Article], query: str) -> list[Article]:
     citations = _normalize_citations([a.citations for a in articles])
 
     for i, article in enumerate(articles):
+        age = CURRENT_YEAR - (article.year or CURRENT_YEAR)
+        if age <= 3:
+            w_recency, w_citations = WEIGHTS["citations"], WEIGHTS["recency"]
+        else:
+            w_recency, w_citations = WEIGHTS["recency"], WEIGHTS["citations"]
         article.score = (
             WEIGHTS["similarity"] * similarities[i]
-            + WEIGHTS["recency"] * recencies[i]
+            + w_recency * recencies[i]
             + WEIGHTS["source"] * sources[i]
-            + WEIGHTS["citations"] * citations[i]
+            + w_citations * citations[i]
         )
 
     return sorted(articles, key=lambda a: a.score, reverse=True)
