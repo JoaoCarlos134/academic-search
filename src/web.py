@@ -69,10 +69,10 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
 
 # ── selection helpers ─────────────────────────────────────────────────────────
 
-def _article_key(article: Article) -> str:
+def _article_key(article: Article, idx: int) -> str:
     if article.doi:
         return article.doi
-    return f"noDOI_{abs(hash(article.title))}_{article.year}"
+    return str(idx)
 
 
 def _clear_selection() -> None:
@@ -165,7 +165,8 @@ def _app() -> None:
 
     # ── article cards ─────────────────────────────────────────────────────────
     for i, a in enumerate(sliced, 1):
-        article_key = _article_key(a)
+        article_key = _article_key(a, i)
+        cb_key = f"sel_{article_key}"
         with st.container(border=True):
             title_col, sel_col = st.columns([5, 1])
             with title_col:
@@ -176,9 +177,6 @@ def _app() -> None:
                 else:
                     st.markdown(f"**{i}. {title}**")
             with sel_col:
-                cb_key = f"sel_{article_key}"
-                if cb_key not in st.session_state:
-                    st.session_state[cb_key] = False
                 is_checked = st.checkbox("Selecionar", key=cb_key)
 
             # Sync checkbox state → selected dict
