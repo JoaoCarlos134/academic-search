@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +68,71 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+# ── export helpers ────────────────────────────────────────────────────────────
+
+def _to_tsv_str(articles: list[Article]) -> str:
+    buf = io.StringIO()
+    buf.write("titulo\tano\tautores\tvenue\tdoi\tcitacoes\tscore\tfonte\n")
+    for a in articles:
+        buf.write("\t".join([
+            a.title or "",
+            str(a.year) if a.year else "",
+            "; ".join(a.authors),
+            a.venue or "",
+            a.doi or "",
+            str(a.citations),
+            f"{a.score:.4f}",
+            a.source,
+        ]) + "\n")
+    return buf.getvalue()
+
+
+def _bibtex_key(article: Article) -> str:
+    surname = article.authors[0].split()[-1] if article.authors else "unknown"
+    first_word = re.sub(r"[^a-zA-Z]", "", (article.title or "").split()[0]) if article.title else "untitled"
+    return f"{surname.lower()}{article.year or '0000'}{first_word.lower()}"
+
+
+def _to_bibtex_str(articles: list[Article]) -> str:
+    buf = io.StringIO()
+    for a in articles:
+        authors = " and ".join(a.authors) if a.authors else "Unknown"
+        buf.write(f"@article{{{_bibtex_key(a)},\n")
+        buf.write(f"  title   = {{{a.title}}},\n")
+        buf.write(f"  author  = {{{authors}}},\n")
+        if a.year:
+            buf.write(f"  year    = {{{a.year}}},\n")
+        if a.doi:
+            buf.write(f"  doi     = {{{a.doi}}},\n")
+        if a.venue:
+            buf.write(f"  journal = {{{a.venue}}},\n")
+        buf.write("}\n\n")
+    return buf.getvalue()
+
+
+def _abnt_author(name: str) -> str:
+    parts = name.strip().split()
+    if len(parts) == 1:
+        return parts[0].upper()
+    return f"{parts[-1].upper()}, {' '.join(parts[:-1])}"
+
+
+def _to_abnt_str(articles: list[Article]) -> str:
+    entries = []
+    for a in articles:
+        if not a.authors:
+            author_str = "AUTOR DESCONHECIDO"
+        elif len(a.authors) <= 3:
+            author_str = "; ".join(_abnt_author(n) for n in a.authors)
+        else:
+            author_str = _abnt_author(a.authors[0]) + " et al."
+
+        venue_year = ", ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
+        doi_str = f" DOI: {a.doi}." if a.doi else ""
+        entries.append(f"{author_str.rstrip('.')}. {a.title or 'Sem titulo'}. {venue_year}.{doi_str}")
+    return "\n\n".join(entries)
+
+
 # ── selection helpers ─────────────────────────────────────────────────────────
 
 def _article_key(article: Article, idx: int) -> str:
@@ -95,6 +161,8 @@ def _app() -> None:
         st.session_state.selected = {}
     if "search_done" not in st.session_state:
         st.session_state.search_done = False
+    if "search_error" not in st.session_state:
+        st.session_state.search_error = None
 
     query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
     col_lim, col_btn = st.columns([4, 1])
@@ -113,21 +181,30 @@ def _app() -> None:
                     results, from_cache = _fetch(query.strip(), limit)
                     st.session_state.results = results
                     st.session_state.from_cache = from_cache
+                    st.session_state.search_error = None
                 except httpx.TimeoutException:
-                    st.warning("Tempo de resposta excedido. Verifique sua conexao e tente novamente.")
                     st.session_state.results = []
+                    st.session_state.search_error = "Tempo de resposta excedido. Verifique sua conexao e tente novamente."
                 except Exception as exc:
-                    st.warning(f"Erro ao buscar resultados: {exc}")
                     st.session_state.results = []
+                    st.session_state.search_error = str(exc)
                 finally:
                     st.session_state.search_done = True
-                    # Drop selection and checkbox state from previous search
                     st.session_state.selected = {}
                     for k in list(st.session_state.keys()):
                         if k.startswith("sel_"):
                             del st.session_state[k]
+            # Força novo script run limpo antes de renderizar os checkboxes.
+            # Sem isso, o Streamlit pode reutilizar o estado interno do widget
+            # anterior para o primeiro artigo (mesma chave no run anterior),
+            # causando dessincronização apenas no primeiro item da lista.
+            st.rerun()
 
     if not st.session_state.search_done:
+        return
+
+    if err := st.session_state.get("search_error"):
+        st.warning(err)
         return
 
     results: list[Article] = st.session_state.results
@@ -211,6 +288,23 @@ def _app() -> None:
                     st.caption(a.abstract)
                 else:
                     st.caption("Abstract nao disponivel")
+
+    # ── exportar selecionados ─────────────────────────────────────────────────
+    if st.session_state.selected:
+        selected_list = list(st.session_state.selected.values())
+        n = len(selected_list)
+        st.divider()
+        st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
+        tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
+        with tab_tsv:
+            st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
+            st.code(_to_tsv_str(selected_list), language=None)
+        with tab_bib:
+            st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
+            st.code(_to_bibtex_str(selected_list), language="bibtex")
+        with tab_abnt:
+            st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
+            st.code(_to_abnt_str(selected_list), language=None)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
