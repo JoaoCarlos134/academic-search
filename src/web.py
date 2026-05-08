@@ -96,7 +96,7 @@ def _content_str(article: Article) -> str:
     return article.abstract[:300] + "..."
 
 
-# ── export: aba Busca (formato legado) ────────────────────────────────────────
+# ── export helpers ────────────────────────────────────────────────────────────
 
 def _to_csv_bytes(articles: list[Article]) -> bytes:
     buf = io.StringIO()
@@ -128,67 +128,9 @@ def _tsv_clean(value) -> str:
     return s.replace("\t", " ").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
-def _to_tsv_str(articles: list[Article]) -> str:
-    buf = io.StringIO()
-    buf.write("titulo\tano\tautores\tvenue\tdoi\tcitacoes\tscore\tfonte\n")
-    for a in articles:
-        buf.write("\t".join(_tsv_clean(v) for v in [
-            a.title or "",
-            str(a.year) if a.year else "",
-            "; ".join(a.authors),
-            a.venue or "",
-            a.doi or "",
-            str(a.citations),
-            f"{a.score:.4f}",
-            a.source,
-        ]) + "\n")
-    return buf.getvalue()
-
-
-def _bibtex_key(article: Article) -> str:
-    surname = article.authors[0].split()[-1] if article.authors else "unknown"
-    first_word = re.sub(r"[^a-zA-Z]", "", (article.title or "").split()[0]) if article.title else "untitled"
-    return f"{surname.lower()}{article.year or '0000'}{first_word.lower()}"
-
-
-def _to_bibtex_str(articles: list[Article]) -> str:
-    buf = io.StringIO()
-    for a in articles:
-        authors = " and ".join(a.authors) if a.authors else "Unknown"
-        buf.write(f"@article{{{_bibtex_key(a)},\n")
-        buf.write(f"  title   = {{{a.title}}},\n")
-        buf.write(f"  author  = {{{authors}}},\n")
-        if a.year:
-            buf.write(f"  year    = {{{a.year}}},\n")
-        if a.doi:
-            buf.write(f"  doi     = {{{a.doi}}},\n")
-        if a.venue:
-            buf.write(f"  journal = {{{a.venue}}},\n")
-        buf.write("}\n\n")
-    return buf.getvalue()
-
-
-def _abnt_author(name: str) -> str:
-    parts = name.strip().split()
-    if len(parts) == 1:
-        return parts[0].upper()
-    return f"{parts[-1].upper()}, {' '.join(parts[:-1])}"
-
-
-def _to_abnt_str(articles: list[Article]) -> str:
-    entries = []
-    for a in articles:
-        if not a.authors:
-            author_str = "AUTOR DESCONHECIDO"
-        elif len(a.authors) <= 3:
-            author_str = "; ".join(_abnt_author(n) for n in a.authors)
-        else:
-            author_str = _abnt_author(a.authors[0]) + " et al."
-
-        venue_year = ", ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
-        doi_str = f" DOI: {a.doi}." if a.doi else ""
-        entries.append(f"{author_str.rstrip('.')}. {a.title or 'Sem titulo'}. {venue_year}.{doi_str}")
-    return "\n\n".join(entries)
+def _bib_escape(s: str) -> str:
+    """Escape & and % which unconditionally break .bib parsing when unescaped."""
+    return s.replace("&", r"\&").replace("%", r"\%")
 
 
 # ── export: aba Exportar (formato planilha) ────────────────────────────────────
@@ -254,13 +196,13 @@ def _to_export_bibtex(articles: list[Article]) -> str:
     buf = io.StringIO()
     for a in articles:
         key = _export_bibtex_key(a)
-        authors = " and ".join(a.authors) if a.authors else "Unknown"
+        authors = _bib_escape(" and ".join(a.authors)) if a.authors else "Unknown"
         link = _article_link(a)
         buf.write(f"@article{{{key},\n")
         buf.write(f"  author   = {{{authors}}},\n")
-        buf.write(f"  title    = {{{a.title or ''}}},\n")
+        buf.write(f"  title    = {{{_bib_escape(a.title or '')}}},\n")
         if a.venue:
-            buf.write(f"  journal  = {{{a.venue}}},\n")
+            buf.write(f"  journal  = {{{_bib_escape(a.venue)}}},\n")
         if a.year:
             buf.write(f"  year     = {{{a.year}}},\n")
         if a.doi:
@@ -268,7 +210,7 @@ def _to_export_bibtex(articles: list[Article]) -> str:
         if link:
             buf.write(f"  url      = {{{link}}},\n")
         if a.abstract:
-            buf.write(f"  abstract = {{{a.abstract}}},\n")
+            buf.write(f"  abstract = {{{_bib_escape(a.abstract)}}},\n")
         if a.citations:
             buf.write(f"  note     = {{Citacoes: {a.citations}}},\n")
         buf.write("}\n\n")
@@ -461,22 +403,12 @@ def _app() -> None:
                                 else:
                                     st.caption("Abstract nao disponivel")
 
-                    # ── exportar selecionados (secao legada) ──────────────────────────────
                     if st.session_state.selected:
-                        selected_list = list(st.session_state.selected.values())
-                        n = len(selected_list)
                         st.divider()
-                        st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
-                        tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
-                        with tab_tsv:
-                            st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
-                            st.code(_to_tsv_str(selected_list), language=None)
-                        with tab_bib:
-                            st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
-                            st.code(_to_bibtex_str(selected_list), language="bibtex")
-                        with tab_abnt:
-                            st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
-                            st.code(_to_abnt_str(selected_list), language=None)
+                        st.info(
+                            f"{len(st.session_state.selected)} artigo(s) selecionado(s). "
+                            "Va para a aba **Exportar** para baixar em TSV, xlsx ou BibTeX."
+                        )
 
     # ── aba Exportar ──────────────────────────────────────────────────────────
     with tab_export:
