@@ -169,11 +169,10 @@ def _app() -> None:
                 else:
                     st.markdown(f"**{i}. {title}**")
             with sel_col:
-                is_checked = st.checkbox(
-                    "Selecionar",
-                    value=article_key in st.session_state.selected,
-                    key=f"sel_{article_key}",
-                )
+                cb_key = f"sel_{article_key}"
+                if cb_key not in st.session_state:
+                    st.session_state[cb_key] = False
+                is_checked = st.checkbox("Selecionar", key=cb_key)
 
             # Sync checkbox state → selected dict
             if is_checked:
