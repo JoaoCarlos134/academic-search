@@ -14,6 +14,8 @@ if _project_root not in sys.path:
 
 import httpx
 import streamlit as st
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 import src.cache as cache
 from src.models import Article
@@ -44,7 +46,35 @@ def _fetch(query: str, limit: int) -> tuple[list[Article], bool]:
     return ranked, False
 
 
-# ── export ────────────────────────────────────────────────────────────────────
+# ── shared field helpers ───────────────────────────────────────────────────────
+
+def _article_link(article: Article) -> str:
+    """URL canonica: DOI → oa_url → vazio."""
+    if article.doi:
+        doi = article.doi
+        return doi if doi.startswith("http") else f"https://doi.org/{doi}"
+    return article.oa_url or ""
+
+
+def _author_str(article: Article) -> str:
+    """Primeiro autor; 'et al.' se houver mais de um."""
+    if not article.authors:
+        return ""
+    if len(article.authors) == 1:
+        return article.authors[0]
+    return f"{article.authors[0]} et al."
+
+
+def _content_str(article: Article) -> str:
+    """Abstract truncado em 300 caracteres."""
+    if not article.abstract:
+        return ""
+    if len(article.abstract) <= 300:
+        return article.abstract
+    return article.abstract[:300] + "..."
+
+
+# ── export: aba Busca (formato legado) ────────────────────────────────────────
 
 def _to_csv_bytes(articles: list[Article]) -> bytes:
     buf = io.StringIO()
@@ -67,8 +97,6 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
         })
     return buf.getvalue().encode("utf-8")
 
-
-# ── export helpers ────────────────────────────────────────────────────────────
 
 def _to_tsv_str(articles: list[Article]) -> str:
     buf = io.StringIO()
@@ -133,6 +161,93 @@ def _to_abnt_str(articles: list[Article]) -> str:
     return "\n\n".join(entries)
 
 
+# ── export: aba Exportar (formato planilha) ────────────────────────────────────
+
+_REF_HEADERS = ["Revista", "Autor", "Ano", "Conteudo", "Titulo", "Link"]
+
+
+def _ref_row(article: Article) -> list:
+    return [
+        article.venue or "",
+        _author_str(article),
+        article.year if article.year else "",
+        _content_str(article),
+        article.title or "",
+        _article_link(article),
+    ]
+
+
+def _to_ref_tsv(articles: list[Article]) -> str:
+    buf = io.StringIO()
+    buf.write("\t".join(_REF_HEADERS) + "\n")
+    for a in articles:
+        buf.write("\t".join(str(v) for v in _ref_row(a)) + "\n")
+    return buf.getvalue()
+
+
+def _to_ref_xlsx(articles: list[Article]) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Referencias"
+
+    bold = Font(bold=True)
+    gray = PatternFill(fill_type="solid", fgColor="D9D9D9")
+    wrap = Alignment(wrap_text=True)
+
+    for col, header in enumerate(_REF_HEADERS, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = bold
+        cell.fill = gray
+
+    for row_idx, a in enumerate(articles, 2):
+        for col_idx, value in enumerate(_ref_row(a), 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            if col_idx in (4, 5):  # Conteudo, Titulo
+                cell.alignment = wrap
+
+    col_widths = [20, 25, 8, 50, 45, 40]
+    for col_idx, width in enumerate(col_widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _export_bibtex_key(article: Article) -> str:
+    surname = article.authors[0].split()[-1].capitalize() if article.authors else "Unknown"
+    first_word = (
+        re.sub(r"[^a-zA-Z]", "", (article.title or "").split()[0]).capitalize()
+        if article.title else "Untitled"
+    )
+    return f"{surname}{article.year or '0000'}{first_word}"
+
+
+def _to_export_bibtex(articles: list[Article]) -> str:
+    buf = io.StringIO()
+    for a in articles:
+        key = _export_bibtex_key(a)
+        authors = " and ".join(a.authors) if a.authors else "Unknown"
+        link = _article_link(a)
+        buf.write(f"@article{{{key},\n")
+        buf.write(f"  author   = {{{authors}}},\n")
+        buf.write(f"  title    = {{{a.title or ''}}},\n")
+        if a.venue:
+            buf.write(f"  journal  = {{{a.venue}}},\n")
+        if a.year:
+            buf.write(f"  year     = {{{a.year}}},\n")
+        if a.doi:
+            buf.write(f"  doi      = {{{a.doi}}},\n")
+        if link:
+            buf.write(f"  url      = {{{link}}},\n")
+        if a.abstract:
+            buf.write(f"  abstract = {{{a.abstract}}},\n")
+        if a.citations:
+            buf.write(f"  note     = {{Citacoes: {a.citations}}},\n")
+        buf.write("}\n\n")
+    return buf.getvalue()
+
+
 # ── selection helpers ─────────────────────────────────────────────────────────
 
 def _article_key(article: Article, idx: int) -> str:
@@ -154,7 +269,7 @@ def _app() -> None:
     st.set_page_config(page_title="Academic Search", layout="wide")
     st.title("Academic Search")
 
-    # Initialize persistent state without overwriting existing values
+    # Initialize persistent state (outside tabs, always runs)
     if "results" not in st.session_state:
         st.session_state.results = []
     if "selected" not in st.session_state:
@@ -164,147 +279,200 @@ def _app() -> None:
     if "search_error" not in st.session_state:
         st.session_state.search_error = None
 
-    query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
-    col_lim, col_btn = st.columns([4, 1])
-    with col_lim:
-        limit = st.slider("Limite de resultados", min_value=5, max_value=50, value=10)
-    with col_btn:
-        st.write("")  # alinha verticalmente com o slider
-        search_clicked = st.button("Buscar", use_container_width=True)
+    tab_busca, tab_export = st.tabs(["Busca", "Exportar"])
 
-    if search_clicked:
-        if not query.strip():
-            st.warning("Digite um termo de busca.")
-        else:
-            with st.spinner("Buscando..."):
-                try:
-                    results, from_cache = _fetch(query.strip(), limit)
-                    st.session_state.results = results
-                    st.session_state.from_cache = from_cache
-                    st.session_state.search_error = None
-                except httpx.TimeoutException:
-                    st.session_state.results = []
-                    st.session_state.search_error = "Tempo de resposta excedido. Verifique sua conexao e tente novamente."
-                except Exception as exc:
-                    st.session_state.results = []
-                    st.session_state.search_error = str(exc)
-                finally:
-                    st.session_state.search_done = True
-                    st.session_state.selected = {}
-                    for k in list(st.session_state.keys()):
-                        if k.startswith("sel_"):
-                            del st.session_state[k]
-            # Força novo script run limpo antes de renderizar os checkboxes.
-            # Sem isso, o Streamlit pode reutilizar o estado interno do widget
-            # anterior para o primeiro artigo (mesma chave no run anterior),
-            # causando dessincronização apenas no primeiro item da lista.
-            st.rerun()
+    # ── aba Busca ─────────────────────────────────────────────────────────────
+    with tab_busca:
+        query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
+        col_lim, col_btn = st.columns([4, 1])
+        with col_lim:
+            limit = st.slider("Limite de resultados", min_value=5, max_value=50, value=10)
+        with col_btn:
+            st.write("")  # alinha verticalmente com o slider
+            search_clicked = st.button("Buscar", use_container_width=True)
 
-    if not st.session_state.search_done:
-        return
-
-    if err := st.session_state.get("search_error"):
-        st.warning(err)
-        return
-
-    results: list[Article] = st.session_state.results
-
-    if not results:
-        st.warning("Nenhum resultado encontrado.")
-        return
-
-    sliced = results[:limit]
-
-    # ── header: count + export CSV ────────────────────────────────────────────
-    header_col, export_col = st.columns([4, 1])
-    with header_col:
-        origin = "cache" if st.session_state.get("from_cache") else "API"
-        st.caption(f"{len(sliced)} artigos encontrados  ({origin})")
-    with export_col:
-        st.download_button(
-            label="Exportar CSV",
-            data=_to_csv_bytes(sliced),
-            file_name="resultados.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # ── selection bar ─────────────────────────────────────────────────────────
-    selected = st.session_state.selected
-    sel_info_col, sel_btn_col = st.columns([4, 1])
-    with sel_info_col:
-        st.caption(f"{len(selected)} artigo(s) selecionado(s)")
-    with sel_btn_col:
-        if selected:
-            if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
-                _clear_selection()
+        if search_clicked:
+            if not query.strip():
+                st.warning("Digite um termo de busca.")
+            else:
+                with st.spinner("Buscando..."):
+                    try:
+                        results, from_cache = _fetch(query.strip(), limit)
+                        st.session_state.results = results
+                        st.session_state.from_cache = from_cache
+                        st.session_state.search_error = None
+                    except httpx.TimeoutException:
+                        st.session_state.results = []
+                        st.session_state.search_error = "Tempo de resposta excedido. Verifique sua conexao e tente novamente."
+                    except Exception as exc:
+                        st.session_state.results = []
+                        st.session_state.search_error = str(exc)
+                    finally:
+                        st.session_state.search_done = True
+                        st.session_state.selected = {}
+                        for k in list(st.session_state.keys()):
+                            if k.startswith("sel_"):
+                                del st.session_state[k]
+                # Força novo script run limpo antes de renderizar os checkboxes.
+                # Sem isso, o Streamlit pode reutilizar o estado interno do widget
+                # anterior para o primeiro artigo (mesma chave no run anterior),
+                # causando dessincronizacao apenas no primeiro item da lista.
                 st.rerun()
 
-    # ── article cards ─────────────────────────────────────────────────────────
-    for i, a in enumerate(sliced, 1):
-        article_key = _article_key(a, i)
-        cb_key = f"sel_{article_key}"
-        with st.container(border=True):
-            title_col, sel_col = st.columns([5, 1])
-            with title_col:
-                title = a.title or "(sem titulo)"
-                if a.doi:
-                    doi_url = a.doi if a.doi.startswith("http") else f"https://doi.org/{a.doi}"
-                    st.markdown(f"**{i}. [{title}]({doi_url})**")
+        if not st.session_state.search_done:
+            st.stop()
+
+        if err := st.session_state.get("search_error"):
+            st.warning(err)
+            st.stop()
+
+        results: list[Article] = st.session_state.results
+
+        if not results:
+            st.warning("Nenhum resultado encontrado.")
+            st.stop()
+
+        sliced = results[:limit]
+
+        # ── header: count + export CSV ────────────────────────────────────────
+        header_col, export_col = st.columns([4, 1])
+        with header_col:
+            origin = "cache" if st.session_state.get("from_cache") else "API"
+            st.caption(f"{len(sliced)} artigos encontrados  ({origin})")
+        with export_col:
+            st.download_button(
+                label="Exportar CSV",
+                data=_to_csv_bytes(sliced),
+                file_name="resultados.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        # ── selection bar ─────────────────────────────────────────────────────
+        selected = st.session_state.selected
+        sel_info_col, sel_btn_col = st.columns([4, 1])
+        with sel_info_col:
+            st.caption(f"{len(selected)} artigo(s) selecionado(s)")
+        with sel_btn_col:
+            if selected:
+                if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
+                    _clear_selection()
+                    st.rerun()
+
+        # ── article cards ─────────────────────────────────────────────────────
+        for i, a in enumerate(sliced, 1):
+            article_key = _article_key(a, i)
+            cb_key = f"sel_{article_key}"
+            with st.container(border=True):
+                title_col, sel_col = st.columns([5, 1])
+                with title_col:
+                    title = a.title or "(sem titulo)"
+                    link = _article_link(a)
+                    if link:
+                        st.markdown(f"**{i}. [{title}]({link})**")
+                    else:
+                        st.markdown(f"**{i}. {title}**")
+                with sel_col:
+                    is_checked = st.checkbox("Selecionar", key=cb_key)
+
+                # Sync checkbox state → selected dict
+                if is_checked:
+                    st.session_state.selected[article_key] = a
                 else:
-                    st.markdown(f"**{i}. {title}**")
-            with sel_col:
-                is_checked = st.checkbox("Selecionar", key=cb_key)
+                    st.session_state.selected.pop(article_key, None)
 
-            # Sync checkbox state → selected dict
-            if is_checked:
-                st.session_state.selected[article_key] = a
-            else:
-                st.session_state.selected.pop(article_key, None)
+                left, right = st.columns([3, 1])
+                with left:
+                    if a.authors:
+                        st.caption(", ".join(a.authors))
+                    meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
+                    if meta:
+                        st.caption(meta)
+                with right:
+                    st.caption(f"Score: {a.score:.3f}")
+                    st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
 
-            left, right = st.columns([3, 1])
-            with left:
-                if a.authors:
-                    st.caption(", ".join(a.authors))
-                meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
-                if meta:
-                    st.caption(meta)
-            with right:
-                st.caption(f"Score: {a.score:.3f}")
-                st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
+                with st.expander("Detalhes", expanded=False):
+                    if a.venue_type:
+                        st.write(f"Tipo de publicacao: {a.venue_type}")
+                    if a.publisher:
+                        st.write(f"Editora: {a.publisher}")
+                    if a.is_oa is not None:
+                        st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
+                    if a.oa_url:
+                        st.link_button("Acessar versao aberta", a.oa_url)
+                    if a.concepts:
+                        st.write(f"Topicos: {' | '.join(a.concepts)}")
+                    if a.abstract:
+                        st.caption(a.abstract)
+                    else:
+                        st.caption("Abstract nao disponivel")
 
-            with st.expander("Detalhes", expanded=False):
-                if a.venue_type:
-                    st.write(f"Tipo de publicacao: {a.venue_type}")
-                if a.publisher:
-                    st.write(f"Editora: {a.publisher}")
-                if a.is_oa is not None:
-                    st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
-                if a.oa_url:
-                    st.link_button("Acessar versao aberta", a.oa_url)
-                if a.concepts:
-                    st.write(f"Topicos: {' | '.join(a.concepts)}")
-                if a.abstract:
-                    st.caption(a.abstract)
-                else:
-                    st.caption("Abstract nao disponivel")
+        # ── exportar selecionados (secao legada) ──────────────────────────────
+        if st.session_state.selected:
+            selected_list = list(st.session_state.selected.values())
+            n = len(selected_list)
+            st.divider()
+            st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
+            tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
+            with tab_tsv:
+                st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
+                st.code(_to_tsv_str(selected_list), language=None)
+            with tab_bib:
+                st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
+                st.code(_to_bibtex_str(selected_list), language="bibtex")
+            with tab_abnt:
+                st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
+                st.code(_to_abnt_str(selected_list), language=None)
 
-    # ── exportar selecionados ─────────────────────────────────────────────────
-    if st.session_state.selected:
+    # ── aba Exportar ──────────────────────────────────────────────────────────
+    with tab_export:
         selected_list = list(st.session_state.selected.values())
+
+        if not selected_list:
+            st.warning("Nenhum artigo selecionado. Volte a aba Busca e marque os artigos.")
+            st.stop()
+
         n = len(selected_list)
+        st.write(f"{n} artigo(s) selecionado(s) para exportacao")
+
+        fmt = st.radio(
+            "Formato de exportacao",
+            [
+                "TSV para Excel (colar direto na planilha)",
+                "Arquivo .xlsx (download direto)",
+                "BibTeX para Overleaf (.bib)",
+            ],
+        )
+
         st.divider()
-        st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
-        tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
-        with tab_tsv:
-            st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
-            st.code(_to_tsv_str(selected_list), language=None)
-        with tab_bib:
-            st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
-            st.code(_to_bibtex_str(selected_list), language="bibtex")
-        with tab_abnt:
-            st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
-            st.code(_to_abnt_str(selected_list), language=None)
+
+        if fmt == "TSV para Excel (colar direto na planilha)":
+            st.write("Copie o texto abaixo e cole no Excel com Ctrl+V")
+            st.code(_to_ref_tsv(selected_list), language=None)
+            st.caption(
+                "O campo Conteudo e o abstract original. Revise e adapte para o "
+                "seu resumo em portugues antes de colar na planilha."
+            )
+
+        elif fmt == "Arquivo .xlsx (download direto)":
+            st.download_button(
+                label="Baixar .xlsx",
+                data=_to_ref_xlsx(selected_list),
+                file_name="referencias_academicas.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        else:  # BibTeX
+            bib = _to_export_bibtex(selected_list)
+            st.write("Copie e cole no seu arquivo .bib no Overleaf ou Zotero")
+            st.code(bib, language=None)
+            st.download_button(
+                label="Baixar referencias.bib",
+                data=bib.encode("utf-8"),
+                file_name="referencias.bib",
+                mime="text/plain",
+            )
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
