@@ -139,5 +139,12 @@ def _bibtex_key(article: Article) -> str:
     return f"{first_author.lower()}{year}{first_word.lower()}"
 
 
+@app.command("clear-cache")
+def clear_cache():
+    """Remove all entries from the local search cache."""
+    removed = cache.clear()
+    console.print(f"[green]Cache limpo: {removed} entrada(s) removida(s).[/green]")
+
+
 if __name__ == "__main__":
     app()

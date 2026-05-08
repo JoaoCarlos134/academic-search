@@ -66,6 +66,14 @@ def _migrate() -> None:
 _migrate()
 
 
+def clear() -> int:
+    """Delete all cached entries. Returns the number of rows removed."""
+    with Session(_engine) as session:
+        result = session.execute(delete(_CachedArticle))
+        session.commit()
+        return result.rowcount
+
+
 def get(query: str) -> list[Article] | None:
     cutoff = datetime.now(timezone.utc) - TTL
     with Session(_engine) as session:
