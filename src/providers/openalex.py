@@ -3,6 +3,7 @@ from typing import Optional
 import httpx
 
 from src.models import Article
+from src.utils import ssl_verify
 
 BASE_URL = "https://api.openalex.org/works"
 EMAIL = "seu@email.com"  # coloque seu email aqui (melhora rate limit)
@@ -27,7 +28,7 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         "mailto": EMAIL,
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, verify=ssl_verify()) as client:
         response = await client.get(BASE_URL, params=params)
         response.raise_for_status()
         data = response.json()
