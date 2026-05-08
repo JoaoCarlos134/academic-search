@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -45,6 +46,9 @@ async def search(query: str, limit: int = 20) -> list[Article]:
 
     articles = []
     for entry in data.get("search-results", {}).get("entry", []):
+        citations = int(entry.get("citedby-count") or 0)
+        if citations == 0:
+            continue
         articles.append(
             Article(
                 title=entry.get("dc:title") or "",
@@ -55,7 +59,7 @@ async def search(query: str, limit: int = 20) -> list[Article]:
                 venue=entry.get("prism:publicationName"),
                 source="elsevier",
                 url=entry.get("prism:url"),
-                citations=int(entry.get("citedby-count") or 0),
+                citations=citations,
                 venue_type=_extract_venue_type(entry.get("subtypeDescription")),
                 publisher=None,
                 is_oa=_extract_oa(entry.get("openaccess")),
@@ -74,7 +78,8 @@ def _extract_year(cover_date: Optional[str]) -> Optional[int]:
         year = int(cover_date[:4])
     except (ValueError, IndexError):
         return None
-    return year if 1000 <= year <= 2025 else None
+    current_year = date.today().year
+    return year if 1000 <= year <= current_year + 2 else None
 
 
 def _extract_authors(authors: list) -> list[str]:
