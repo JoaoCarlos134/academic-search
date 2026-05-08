@@ -65,7 +65,7 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
 def _article_key(article: Article) -> str:
     if article.doi:
         return article.doi
-    return f"notitle_{hash(article.title)}"
+    return f"noDOI_{abs(hash(article.title))}_{article.year}"
 
 
 def _clear_selection() -> None:
@@ -152,7 +152,7 @@ def _app() -> None:
         st.caption(f"{len(selected)} artigo(s) selecionado(s)")
     with sel_btn_col:
         if selected:
-            if st.button("Limpar selecao", use_container_width=True):
+            if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
                 _clear_selection()
                 st.rerun()
 
