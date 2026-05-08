@@ -18,6 +18,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 import src.cache as cache
+from src.cache import (
+    clear_hidden,
+    get_hidden_articles,
+    get_hidden_dois,
+    hide_article,
+    unhide_article,
+)
 from src.models import Article
 from src.providers.elsevier import search as elsevier_search
 from src.providers.ieee import search as ieee_search
@@ -247,6 +254,13 @@ def _to_export_bibtex(articles: list[Article]) -> str:
 
 # ── selection helpers ─────────────────────────────────────────────────────────
 
+def _hide_key(article: Article) -> str:
+    """Chave estavel para ocultar: DOI ou hash do titulo (independente de posicao)."""
+    if article.doi:
+        return article.doi
+    return f"notitle_{abs(hash(article.title or ''))}"
+
+
 def _article_key(article: Article, idx: int) -> str:
     if article.doi:
         return article.doi
@@ -276,7 +290,7 @@ def _app() -> None:
     if "search_error" not in st.session_state:
         st.session_state.search_error = None
 
-    tab_busca, tab_export = st.tabs(["Busca", "Exportar"])
+    tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
 
     # ── aba Busca ─────────────────────────────────────────────────────────────
     with tab_busca:
@@ -295,7 +309,10 @@ def _app() -> None:
                 with st.spinner("Buscando..."):
                     try:
                         results, from_cache = _fetch(query.strip(), limit)
-                        st.session_state.results = results
+                        hidden = get_hidden_dois()
+                        visible = [a for a in results if _hide_key(a) not in hidden]
+                        st.session_state.results = visible
+                        st.session_state.hidden_count = len(results) - len(visible)
                         st.session_state.from_cache = from_cache
                         st.session_state.search_error = None
                     except httpx.TimeoutException:
@@ -316,111 +333,120 @@ def _app() -> None:
                 # causando dessincronizacao apenas no primeiro item da lista.
                 st.rerun()
 
-        if not st.session_state.search_done:
-            st.stop()
-
-        if err := st.session_state.get("search_error"):
-            st.warning(err)
-            st.stop()
-
-        results: list[Article] = st.session_state.results
-
-        if not results:
-            st.warning("Nenhum resultado encontrado.")
-            st.stop()
-
-        sliced = results[:limit]
-
-        # ── header: count + export CSV ────────────────────────────────────────
-        header_col, export_col = st.columns([4, 1])
-        with header_col:
-            origin = "cache" if st.session_state.get("from_cache") else "API"
-            st.caption(f"{len(sliced)} artigos encontrados  ({origin})")
-        with export_col:
-            st.download_button(
-                label="Exportar CSV",
-                data=_to_csv_bytes(sliced),
-                file_name="resultados.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-        # ── selection bar ─────────────────────────────────────────────────────
-        selected = st.session_state.selected
-        sel_info_col, sel_btn_col = st.columns([4, 1])
-        with sel_info_col:
-            st.caption(f"{len(selected)} artigo(s) selecionado(s)")
-        with sel_btn_col:
-            if selected:
-                if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
-                    _clear_selection()
-                    st.rerun()
-
-        # ── article cards ─────────────────────────────────────────────────────
-        for i, a in enumerate(sliced, 1):
-            article_key = _article_key(a, i)
-            cb_key = f"sel_{article_key}"
-            with st.container(border=True):
-                title_col, sel_col = st.columns([5, 1])
-                with title_col:
-                    title = a.title or "(sem titulo)"
-                    link = _article_link(a)
-                    if link:
-                        st.markdown(f"**{i}. [{title}]({link})**")
-                    else:
-                        st.markdown(f"**{i}. {title}**")
-                with sel_col:
-                    is_checked = st.checkbox("Selecionar", key=cb_key)
-
-                # Sync checkbox state → selected dict
-                if is_checked:
-                    st.session_state.selected[article_key] = a
+        if st.session_state.search_done:
+            if err := st.session_state.get("search_error"):
+                st.warning(err)
+            else:
+                results: list[Article] = st.session_state.results
+                if not results:
+                    st.warning("Nenhum resultado encontrado.")
                 else:
-                    st.session_state.selected.pop(article_key, None)
+                    sliced = results[:limit]
 
-                left, right = st.columns([3, 1])
-                with left:
-                    if a.authors:
-                        st.caption(", ".join(a.authors))
-                    meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
-                    if meta:
-                        st.caption(meta)
-                with right:
-                    st.caption(f"Score: {a.score:.3f}")
-                    st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
+                    # ── header: count + export CSV ────────────────────────────────────────
+                    header_col, export_col = st.columns([4, 1])
+                    with header_col:
+                        origin = "cache" if st.session_state.get("from_cache") else "API"
+                        st.caption(f"{len(sliced)} artigos encontrados  ({origin})")
+                        hidden_count = st.session_state.get("hidden_count", 0)
+                        if hidden_count:
+                            st.caption(f"{hidden_count} artigo(s) oculto(s) nesta busca")
+                    with export_col:
+                        st.download_button(
+                            label="Exportar CSV",
+                            data=_to_csv_bytes(sliced),
+                            file_name="resultados.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
 
-                with st.expander("Detalhes", expanded=False):
-                    if a.venue_type:
-                        st.write(f"Tipo de publicacao: {a.venue_type}")
-                    if a.publisher:
-                        st.write(f"Editora: {a.publisher}")
-                    if a.is_oa is not None:
-                        st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
-                    if a.oa_url:
-                        st.link_button("Acessar versao aberta", a.oa_url)
-                    if a.concepts:
-                        st.write(f"Topicos: {' | '.join(a.concepts)}")
-                    if a.abstract:
-                        st.caption(a.abstract)
-                    else:
-                        st.caption("Abstract nao disponivel")
+                    # ── selection bar ─────────────────────────────────────────────────────
+                    selected = st.session_state.selected
+                    sel_info_col, sel_btn_col = st.columns([4, 1])
+                    with sel_info_col:
+                        st.caption(f"{len(selected)} artigo(s) selecionado(s)")
+                    with sel_btn_col:
+                        if selected:
+                            if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
+                                _clear_selection()
+                                st.rerun()
 
-        # ── exportar selecionados (secao legada) ──────────────────────────────
-        if st.session_state.selected:
-            selected_list = list(st.session_state.selected.values())
-            n = len(selected_list)
-            st.divider()
-            st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
-            tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
-            with tab_tsv:
-                st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
-                st.code(_to_tsv_str(selected_list), language=None)
-            with tab_bib:
-                st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
-                st.code(_to_bibtex_str(selected_list), language="bibtex")
-            with tab_abnt:
-                st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
-                st.code(_to_abnt_str(selected_list), language=None)
+                    # ── article cards ─────────────────────────────────────────────────────
+                    for i, a in enumerate(sliced, 1):
+                        article_key = _article_key(a, i)
+                        hide_key = _hide_key(a)
+                        cb_key = f"sel_{article_key}"
+                        with st.container(border=True):
+                            title_col, sel_col, hide_col = st.columns([6, 2, 1])
+                            with title_col:
+                                title = a.title or "(sem titulo)"
+                                link = _article_link(a)
+                                if link:
+                                    st.markdown(f"**{i}. [{title}]({link})**")
+                                else:
+                                    st.markdown(f"**{i}. {title}**")
+                            with sel_col:
+                                is_checked = st.checkbox("Selecionar", key=cb_key)
+                            with hide_col:
+                                if st.button("Ocultar", key=f"hide_{article_key}"):
+                                    hide_article(hide_key, a.title or "")
+                                    st.session_state.results = [
+                                        r for r in st.session_state.results
+                                        if _hide_key(r) != hide_key
+                                    ]
+                                    st.session_state.selected.pop(article_key, None)
+                                    st.session_state[cb_key] = False
+                                    st.rerun()
+
+                            # Sync checkbox state → selected dict
+                            if is_checked:
+                                st.session_state.selected[article_key] = a
+                            else:
+                                st.session_state.selected.pop(article_key, None)
+
+                            left, right = st.columns([3, 1])
+                            with left:
+                                if a.authors:
+                                    st.caption(", ".join(a.authors))
+                                meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
+                                if meta:
+                                    st.caption(meta)
+                            with right:
+                                st.caption(f"Score: {a.score:.3f}")
+                                st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
+
+                            with st.expander("Detalhes", expanded=False):
+                                if a.venue_type:
+                                    st.write(f"Tipo de publicacao: {a.venue_type}")
+                                if a.publisher:
+                                    st.write(f"Editora: {a.publisher}")
+                                if a.is_oa is not None:
+                                    st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
+                                if a.oa_url:
+                                    st.link_button("Acessar versao aberta", a.oa_url)
+                                if a.concepts:
+                                    st.write(f"Topicos: {' | '.join(a.concepts)}")
+                                if a.abstract:
+                                    st.caption(a.abstract)
+                                else:
+                                    st.caption("Abstract nao disponivel")
+
+                    # ── exportar selecionados (secao legada) ──────────────────────────────
+                    if st.session_state.selected:
+                        selected_list = list(st.session_state.selected.values())
+                        n = len(selected_list)
+                        st.divider()
+                        st.subheader(f"Exportar {n} artigo(s) selecionado(s)")
+                        tab_tsv, tab_bib, tab_abnt = st.tabs(["TSV", "BibTeX", "ABNT"])
+                        with tab_tsv:
+                            st.caption("Cole diretamente no Excel ou LibreOffice Calc (Ctrl+V).")
+                            st.code(_to_tsv_str(selected_list), language=None)
+                        with tab_bib:
+                            st.caption("Importe no Mendeley, Zotero ou compile com LaTeX.")
+                            st.code(_to_bibtex_str(selected_list), language="bibtex")
+                        with tab_abnt:
+                            st.caption("Citacoes no formato ABNT NBR 6023 (aproximado).")
+                            st.code(_to_abnt_str(selected_list), language=None)
 
     # ── aba Exportar ──────────────────────────────────────────────────────────
     with tab_export:
@@ -428,53 +454,99 @@ def _app() -> None:
 
         if not selected_list:
             st.warning("Nenhum artigo selecionado. Volte a aba Busca e marque os artigos.")
-            st.stop()
+        else:
+            n = len(selected_list)
+            st.write(f"{n} artigo(s) selecionado(s) para exportacao")
 
-        n = len(selected_list)
-        st.write(f"{n} artigo(s) selecionado(s) para exportacao")
-
-        fmt = st.radio(
-            "Formato de exportacao",
-            [
-                "TSV para Excel (colar direto na planilha)",
-                "Arquivo .xlsx (download direto)",
-                "BibTeX para Overleaf (.bib)",
-            ],
-        )
-
-        st.divider()
-
-        if fmt == "TSV para Excel (colar direto na planilha)":
-            st.write("Copie o texto abaixo e cole na primeira linha vazia da sua planilha")
-            st.text_area(
-                label="",
-                value=_to_ref_tsv(selected_list),
-                height=200,
-                key="tsv_output",
-            )
-            st.caption(
-                "O campo Conteudo e o abstract original. Revise e adapte para o "
-                "seu resumo em portugues antes de colar na planilha."
+            ocultar_apos = st.checkbox(
+                "Ocultar artigos selecionados apos exportar",
+                value=True,
+                key="ocultar_apos_export",
             )
 
-        elif fmt == "Arquivo .xlsx (download direto)":
-            st.download_button(
-                label="Baixar .xlsx",
-                data=_to_ref_xlsx(selected_list),
-                file_name="referencias_academicas.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            fmt = st.radio(
+                "Formato de exportacao",
+                [
+                    "TSV para Excel (colar direto na planilha)",
+                    "Arquivo .xlsx (download direto)",
+                    "BibTeX para Overleaf (.bib)",
+                ],
             )
 
-        else:  # BibTeX
-            bib = _to_export_bibtex(selected_list)
-            st.write("Copie e cole no seu arquivo .bib no Overleaf ou Zotero")
-            st.code(bib, language=None)
-            st.download_button(
-                label="Baixar referencias.bib",
-                data=bib.encode("utf-8"),
-                file_name="referencias.bib",
-                mime="text/plain",
-            )
+            st.divider()
+
+            def _do_hide_selected() -> None:
+                for article in selected_list:
+                    hide_article(_hide_key(article), article.title or "")
+                st.session_state.selected = {}
+                st.info("Artigos exportados foram marcados como ocultos.")
+
+            if fmt == "TSV para Excel (colar direto na planilha)":
+                st.write("Copie o texto abaixo e cole na primeira linha vazia da sua planilha")
+                st.text_area(
+                    label="",
+                    value=_to_ref_tsv(selected_list),
+                    height=200,
+                    key="tsv_output",
+                )
+                st.caption(
+                    "O campo Conteudo e o abstract original. Revise e adapte para o "
+                    "seu resumo em portugues antes de colar na planilha."
+                )
+                if ocultar_apos:
+                    if st.button("Confirmar exportacao e ocultar artigos", key="btn_hide_tsv"):
+                        _do_hide_selected()
+                        st.rerun()
+
+            elif fmt == "Arquivo .xlsx (download direto)":
+                xlsx_clicked = st.download_button(
+                    label="Baixar .xlsx",
+                    data=_to_ref_xlsx(selected_list),
+                    file_name="referencias_academicas.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                if xlsx_clicked and ocultar_apos:
+                    _do_hide_selected()
+                    st.rerun()
+
+            else:  # BibTeX
+                bib = _to_export_bibtex(selected_list)
+                st.write("Copie e cole no seu arquivo .bib no Overleaf ou Zotero")
+                st.code(bib, language=None)
+                bib_clicked = st.download_button(
+                    label="Baixar referencias.bib",
+                    data=bib.encode("utf-8"),
+                    file_name="referencias.bib",
+                    mime="text/plain",
+                )
+                if bib_clicked and ocultar_apos:
+                    _do_hide_selected()
+                    st.rerun()
+
+    # ── aba Ocultos ───────────────────────────────────────────────────────────
+    with tab_ocultos:
+        ocultos = get_hidden_articles()
+
+        if not ocultos:
+            st.info("Nenhum artigo oculto.")
+        else:
+            top_col, btn_col = st.columns([4, 1])
+            with top_col:
+                st.write(f"{len(ocultos)} artigo(s) oculto(s)")
+            with btn_col:
+                if st.button("Limpar todos os ocultos", key="btn_clear_hidden", use_container_width=True):
+                    clear_hidden()
+                    st.rerun()
+
+            for entry in ocultos:
+                title_display = (entry["title"] or entry["doi"])[:80]
+                row_col, restore_col = st.columns([5, 1])
+                with row_col:
+                    st.write(title_display)
+                with restore_col:
+                    if st.button("Restaurar", key=f"restore_{entry['doi']}"):
+                        unhide_article(entry["doi"])
+                        st.rerun()
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

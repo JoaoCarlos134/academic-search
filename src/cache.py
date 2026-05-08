@@ -39,6 +39,14 @@ class _CachedArticle(_Base):
     concepts = Column(Text, nullable=True)  # JSON-encoded list[str] | None
 
 
+class _HiddenArticle(_Base):
+    __tablename__ = "hidden_articles"
+
+    doi = Column(String, primary_key=True)
+    title = Column(String, nullable=True)
+    hidden_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 _Base.metadata.create_all(_engine)
 _EXTRA_COLS = {
     "venue_type": "VARCHAR",
@@ -72,6 +80,41 @@ def clear() -> int:
         result = session.execute(delete(_CachedArticle))
         session.commit()
         return result.rowcount
+
+
+def hide_article(doi: str, title: str) -> None:
+    with Session(_engine) as session:
+        session.execute(
+            text("INSERT OR IGNORE INTO hidden_articles (doi, title, hidden_at) VALUES (:doi, :title, :now)"),
+            {"doi": doi, "title": title, "now": datetime.utcnow()},
+        )
+        session.commit()
+
+
+def get_hidden_dois() -> set[str]:
+    with Session(_engine) as session:
+        rows = session.scalars(select(_HiddenArticle.doi)).all()
+    return {r for r in rows}
+
+
+def unhide_article(doi: str) -> None:
+    with Session(_engine) as session:
+        session.execute(delete(_HiddenArticle).where(_HiddenArticle.doi == doi))
+        session.commit()
+
+
+def clear_hidden() -> None:
+    with Session(_engine) as session:
+        session.execute(delete(_HiddenArticle))
+        session.commit()
+
+
+def get_hidden_articles() -> list[dict]:
+    with Session(_engine) as session:
+        rows = session.scalars(
+            select(_HiddenArticle).order_by(_HiddenArticle.hidden_at.desc())
+        ).all()
+    return [{"doi": r.doi, "title": r.title} for r in rows]
 
 
 def get(query: str) -> list[Article] | None:
