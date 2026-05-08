@@ -60,11 +60,34 @@ def _to_csv_bytes(articles: list[Article]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+# ── selection helpers ─────────────────────────────────────────────────────────
+
+def _article_key(article: Article) -> str:
+    if article.doi:
+        return article.doi
+    return f"notitle_{hash(article.title)}"
+
+
+def _clear_selection() -> None:
+    st.session_state.selected = {}
+    for k in list(st.session_state.keys()):
+        if k.startswith("sel_"):
+            st.session_state[k] = False
+
+
 # ── Streamlit UI ──────────────────────────────────────────────────────────────
 
 def _app() -> None:
     st.set_page_config(page_title="Academic Search", layout="wide")
     st.title("Academic Search")
+
+    # Initialize persistent state without overwriting existing values
+    if "results" not in st.session_state:
+        st.session_state.results = []
+    if "selected" not in st.session_state:
+        st.session_state.selected = {}
+    if "search_done" not in st.session_state:
+        st.session_state.search_done = False
 
     query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
     col_lim, col_btn = st.columns([4, 1])
@@ -81,19 +104,26 @@ def _app() -> None:
             with st.spinner("Buscando..."):
                 try:
                     results, from_cache = _fetch(query.strip(), limit)
-                    st.session_state["results"] = results
-                    st.session_state["from_cache"] = from_cache
+                    st.session_state.results = results
+                    st.session_state.from_cache = from_cache
                 except httpx.TimeoutException:
                     st.warning("Tempo de resposta excedido. Verifique sua conexao e tente novamente.")
-                    st.session_state.pop("results", None)
+                    st.session_state.results = []
                 except Exception as exc:
                     st.warning(f"Erro ao buscar resultados: {exc}")
-                    st.session_state.pop("results", None)
+                    st.session_state.results = []
+                finally:
+                    st.session_state.search_done = True
+                    # Drop selection and checkbox state from previous search
+                    st.session_state.selected = {}
+                    for k in list(st.session_state.keys()):
+                        if k.startswith("sel_"):
+                            del st.session_state[k]
 
-    results: list[Article] | None = st.session_state.get("results")
-
-    if results is None:
+    if not st.session_state.search_done:
         return
+
+    results: list[Article] = st.session_state.results
 
     if not results:
         st.warning("Nenhum resultado encontrado.")
@@ -101,6 +131,7 @@ def _app() -> None:
 
     sliced = results[:limit]
 
+    # ── header: count + export CSV ────────────────────────────────────────────
     header_col, export_col = st.columns([4, 1])
     with header_col:
         origin = "cache" if st.session_state.get("from_cache") else "API"
@@ -114,14 +145,41 @@ def _app() -> None:
             use_container_width=True,
         )
 
+    # ── selection bar ─────────────────────────────────────────────────────────
+    selected = st.session_state.selected
+    sel_info_col, sel_btn_col = st.columns([4, 1])
+    with sel_info_col:
+        st.caption(f"{len(selected)} artigo(s) selecionado(s)")
+    with sel_btn_col:
+        if selected:
+            if st.button("Limpar selecao", use_container_width=True):
+                _clear_selection()
+                st.rerun()
+
+    # ── article cards ─────────────────────────────────────────────────────────
     for i, a in enumerate(sliced, 1):
+        article_key = _article_key(a)
         with st.container(border=True):
-            title = a.title or "(sem titulo)"
-            if a.doi:
-                doi_url = a.doi if a.doi.startswith("http") else f"https://doi.org/{a.doi}"
-                st.markdown(f"**{i}. [{title}]({doi_url})**")
+            title_col, sel_col = st.columns([5, 1])
+            with title_col:
+                title = a.title or "(sem titulo)"
+                if a.doi:
+                    doi_url = a.doi if a.doi.startswith("http") else f"https://doi.org/{a.doi}"
+                    st.markdown(f"**{i}. [{title}]({doi_url})**")
+                else:
+                    st.markdown(f"**{i}. {title}**")
+            with sel_col:
+                is_checked = st.checkbox(
+                    "Selecionar",
+                    value=article_key in st.session_state.selected,
+                    key=f"sel_{article_key}",
+                )
+
+            # Sync checkbox state → selected dict
+            if is_checked:
+                st.session_state.selected[article_key] = a
             else:
-                st.markdown(f"**{i}. {title}**")
+                st.session_state.selected.pop(article_key, None)
 
             left, right = st.columns([3, 1])
             with left:
