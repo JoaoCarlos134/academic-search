@@ -277,6 +277,8 @@ def _app() -> None:
         st.session_state.search_done = False
     if "search_error" not in st.session_state:
         st.session_state.search_error = None
+    if "display_limit" not in st.session_state:
+        st.session_state.display_limit = 10
 
     tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
 
@@ -368,6 +370,7 @@ def _app() -> None:
                         st.session_state.search_error = str(exc)
                     finally:
                         st.session_state.search_done = True
+                        st.session_state.display_limit = limit
                         st.session_state.selected = {}
                         for k in list(st.session_state.keys()):
                             if k.startswith("sel_"):
@@ -400,7 +403,8 @@ def _app() -> None:
                     return out
 
                 filtered = _apply_filters(results)
-                sliced = filtered[:limit]
+                display_limit = st.session_state.display_limit
+                sliced = filtered[:display_limit]
 
                 if not sliced:
                     st.warning("Nenhum resultado encontrado com os filtros atuais.")
@@ -508,6 +512,28 @@ def _app() -> None:
                                     st.caption(a.abstract)
                                 else:
                                     st.caption("Abstract nao disponivel")
+
+                    # ── paginacao dentro do pool cacheado ─────────────────────────────
+                    has_more = len(filtered) > display_limit
+                    all_shown = display_limit >= len(filtered)
+                    if has_more or display_limit > limit:
+                        pg_col, reset_col = st.columns([3, 1])
+                        with pg_col:
+                            if has_more:
+                                remaining = len(filtered) - display_limit
+                                if st.button(
+                                    f"Mostrar mais ({min(10, remaining)} de {remaining} restantes)",
+                                    key="btn_show_more",
+                                ):
+                                    st.session_state.display_limit += 10
+                                    st.rerun()
+                            else:
+                                st.caption("Todos os resultados do pool estao exibidos.")
+                        with reset_col:
+                            if display_limit > limit:
+                                if st.button("Recolher", key="btn_collapse", use_container_width=True):
+                                    st.session_state.display_limit = limit
+                                    st.rerun()
 
                     if st.session_state.selected:
                         st.divider()

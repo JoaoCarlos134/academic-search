@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09
+Atualizado: 2026-05-09 (media prioridade concluida)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -23,24 +23,26 @@ ALTA PRIORIDADE — CONCLUIDO EM 2026-05-09
     e open access. Todos os campos ja existem no Article.
 
 ========================================
-MEDIA PRIORIDADE
+MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ========================================
 
-[ ] Testes
-    Sem nenhum teste atualmente. Candidatos:
-    - dedup_articles + _normalize_doi (logica critica de DOI)
-    - ranking com artigos sem ano/abstract
-    - cache get/set roundtrip com TTL
-    - cada provider com resposta mockada
+[x] Testes (2026-05-09)
+    46 testes cobrindo: dedup_articles, _normalize_doi (8 casos),
+    ranking (keyword similarity, recency, citations, score_articles — 12 casos),
+    cache get/set/TTL/min_size/hidden articles (13 casos).
+    Localizacao: tests/test_utils.py, tests/test_ranking.py, tests/test_cache.py
 
-[ ] Paginacao / "carregar mais"
-    Slider vai ate 50. Um botao "Carregar mais" que incrementa o limit
-    e refaz a busca permite acessar resultados alem do limite atual.
+[x] Paginacao / "carregar mais" (2026-05-09)
+    Implementada dentro do pool cacheado (sem novas chamadas a API).
+    Nova busca nao e disparada — somente incrementa display_limit em 10.
+    Botao "Recolher" volta ao tamanho inicial.
+    Decisao: paginacao com novas chamadas a API foi descartada por risco
+    de quota nas APIs institucionais (Elsevier/IEEE).
 
-[ ] Cache de embeddings
-    sentence-transformers re-codifica todos os artigos a cada busca.
-    Persistir vetores por DOI no SQLite eliminaria reprocessamento.
-    Impacto perceptivel com 30+ artigos.
+[x] Cache de embeddings em memoria (2026-05-09)
+    Dict em processo (_embedding_cache em ranking.py) mapeia DOI/titulo
+    -> tensor. Artigos ja vistos nao sao re-encodados pelo sentence-transformers.
+    Persiste enquanto o processo Streamlit estiver rodando.
 
 ========================================
 BAIXA PRIORIDADE

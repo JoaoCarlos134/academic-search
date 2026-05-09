@@ -23,6 +23,11 @@ WEIGHTS = {
 _model = None
 _model_loaded = False
 
+# In-process cache: maps DOI-or-title key → embedding tensor.
+# Persists for the lifetime of the process (one Streamlit session).
+# Avoids re-encoding the same article on every search interaction.
+_embedding_cache: dict = {}
+
 
 def _get_model():
     global _model, _model_loaded
@@ -78,9 +83,21 @@ def _compute_similarity(articles: list[Article], query: str) -> list[float]:
     return _keyword_similarity(articles, query)
 
 
+def _article_cache_key(article: Article) -> str:
+    return article.doi or article.title or ""
+
+
 def _embedding_similarity(articles: list[Article], query: str, model) -> list[float]:
-    texts = [f"{a.title} {a.abstract or ''}" for a in articles]
-    query_emb, *doc_embs = model.encode([query] + texts, convert_to_tensor=True)
+    # Encode only articles not already in the in-process cache
+    miss_indices = [i for i, a in enumerate(articles) if _article_cache_key(a) not in _embedding_cache]
+    if miss_indices:
+        miss_texts = [f"{articles[i].title} {articles[i].abstract or ''}" for i in miss_indices]
+        miss_embs = model.encode(miss_texts, convert_to_tensor=True)
+        for i, emb in zip(miss_indices, miss_embs):
+            _embedding_cache[_article_cache_key(articles[i])] = emb
+
+    doc_embs = [_embedding_cache[_article_cache_key(a)] for a in articles]
+    query_emb = model.encode([query], convert_to_tensor=True)[0]
     scores = [float(model.similarity(query_emb, d)) for d in doc_embs]
     # similarity() returns [-1, 1]; shift to [0, 1]
     scores = [(s + 1) / 2 for s in scores]
