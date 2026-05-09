@@ -1,10 +1,13 @@
 import asyncio
 import csv
 import io
+import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # When Streamlit runs this file it adds src/ to sys.path, breaking `import src.*`.
 # Insert the project root so the src package is always resolvable.
@@ -20,9 +23,11 @@ from openpyxl.styles import Alignment, Font, PatternFill
 import src.cache as cache
 from src.cache import (
     clear_hidden,
+    count_hidden,
     get_hidden_articles,
     get_hidden_dois,
     hide_article,
+    sweep_hidden,
     unhide_article,
 )
 from src.models import Article
@@ -58,7 +63,7 @@ async def _search_all(
         if isinstance(result, BaseException):
             failed.append(name)
             errors[name] = str(result)
-            print(f"[{name}] provider failed: {result}")
+            logger.warning("[%s] provider failed: %s", name, result)
             continue
         articles.extend(result)
     return dedup_articles(articles), failed, errors
@@ -621,23 +626,34 @@ def _app() -> None:
     # ── aba Ocultos ───────────────────────────────────────────────────────────
     with tab_ocultos:
         ocultos = get_hidden_articles()
+        total_hidden = len(ocultos)
 
         if not ocultos:
             st.info("Nenhum artigo oculto.")
         else:
-            top_col, btn_col = st.columns([4, 1])
+            top_col, sweep_col, btn_col = st.columns([3, 1, 1])
             with top_col:
-                st.write(f"{len(ocultos)} artigo(s) oculto(s)")
+                st.write(f"{total_hidden} artigo(s) oculto(s)")
+                if total_hidden >= 100:
+                    st.warning(f"{total_hidden} artigos ocultos. Use 'Limpar antigos' para remover os de mais de 90 dias.")
+            with sweep_col:
+                if st.button("Limpar antigos (90d)", key="btn_sweep_hidden", use_container_width=True):
+                    removed = sweep_hidden(days=90)
+                    st.toast(f"{removed} artigo(s) removido(s).")
+                    st.rerun()
             with btn_col:
-                if st.button("Limpar todos os ocultos", key="btn_clear_hidden", use_container_width=True):
+                if st.button("Limpar todos", key="btn_clear_hidden", use_container_width=True):
                     clear_hidden()
                     st.rerun()
 
             for entry in ocultos:
                 title_display = (entry["title"] or entry["doi"])[:80]
+                hidden_at = entry.get("hidden_at")
                 row_col, restore_col = st.columns([5, 1])
                 with row_col:
                     st.write(title_display)
+                    if hidden_at:
+                        st.caption(f"Oculto em {hidden_at.strftime('%d/%m/%Y')}")
                 with restore_col:
                     if st.button("Restaurar", key=f"restore_{entry['doi']}"):
                         unhide_article(entry["doi"])

@@ -133,7 +133,23 @@ def get_hidden_articles() -> list[dict]:
         rows = session.scalars(
             select(_HiddenArticle).order_by(_HiddenArticle.hidden_at.desc())
         ).all()
-    return [{"doi": r.doi, "title": r.title} for r in rows]
+    return [{"doi": r.doi, "title": r.title, "hidden_at": r.hidden_at} for r in rows]
+
+
+def sweep_hidden(days: int = 90) -> int:
+    """Delete hidden articles older than `days` days. Returns count removed."""
+    cutoff = _utcnow() - timedelta(days=days)
+    with Session(_engine) as session:
+        result = session.execute(
+            delete(_HiddenArticle).where(_HiddenArticle.hidden_at < cutoff)
+        )
+        session.commit()
+        return result.rowcount
+
+
+def count_hidden() -> int:
+    with Session(_engine) as session:
+        return session.query(_HiddenArticle).count()
 
 
 def get(query: str, min_size: int = 0) -> list[Article] | None:

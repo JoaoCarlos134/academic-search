@@ -32,6 +32,10 @@ def main(
     limit: int = typer.Option(10, "--limit", "-n", help="Numero de resultados"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Arquivo de saida"),
     fmt: Format = typer.Option(Format.csv, "--format", "-f", help="Formato de saida: csv, bibtex"),
+    year_from: Optional[int] = typer.Option(None, "--year-from", help="Ano minimo de publicacao"),
+    year_to: Optional[int] = typer.Option(None, "--year-to", help="Ano maximo de publicacao"),
+    source: Optional[list[str]] = typer.Option(None, "--source", "-s", help="Filtrar por fonte: openalex, elsevier, ieee (repetivel)"),
+    oa_only: bool = typer.Option(False, "--oa-only", help="Somente artigos Open Access"),
 ):
     """Search academic papers across multiple sources."""
     console.print(f"\nBuscando: [bold cyan]{query}[/bold cyan]\n")
@@ -45,7 +49,8 @@ def main(
         ranked = score_articles(articles, query)
         cache.set(query, ranked)
 
-    results = ranked[:limit]
+    results = _apply_filters(ranked, year_from=year_from, year_to=year_to, sources=source, oa_only=oa_only)
+    results = results[:limit]
 
     if output:
         if fmt == Format.bibtex:
@@ -55,6 +60,27 @@ def main(
         console.print(f"[green]Salvo em {output}[/green]")
     else:
         _display_results(results)
+
+
+def _apply_filters(
+    articles: list[Article],
+    year_from: Optional[int],
+    year_to: Optional[int],
+    sources: Optional[list[str]],
+    oa_only: bool,
+) -> list[Article]:
+    out = []
+    for a in articles:
+        if year_from is not None and (a.year is None or a.year < year_from):
+            continue
+        if year_to is not None and (a.year is None or a.year > year_to):
+            continue
+        if sources and a.source not in sources:
+            continue
+        if oa_only and not a.is_oa:
+            continue
+        out.append(a)
+    return out
 
 
 async def _search_all(query: str, limit: int) -> list[Article]:

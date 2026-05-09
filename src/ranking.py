@@ -1,8 +1,11 @@
+import logging
 import math
 from datetime import datetime
 from typing import Optional
 
 from src.models import Article
+
+logger = logging.getLogger(__name__)
 
 CURRENT_YEAR = datetime.now().year
 
@@ -37,7 +40,7 @@ def _get_model():
         from sentence_transformers import SentenceTransformer
         _model = SentenceTransformer("all-MiniLM-L6-v2")
     except Exception as exc:
-        print(f"[ranking] sentence-transformers unavailable, falling back to keyword similarity: {exc}")
+        logger.warning("sentence-transformers unavailable, falling back to keyword similarity: %s", exc)
         _model = None
     _model_loaded = True
     return _model

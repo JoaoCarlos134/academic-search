@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (media prioridade concluida)
+Atualizado: 2026-05-09 (todas as prioridades concluidas)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -45,20 +45,23 @@ MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
     Persiste enquanto o processo Streamlit estiver rodando.
 
 ========================================
-BAIXA PRIORIDADE
+BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ========================================
 
-[ ] Migrar print() para logging
-    web.py e cli.py usam print() para avisos de providers.
-    logging permite filtrar por nivel e capturar no Streamlit.
+[x] Migrar print() para logging (2026-05-09)
+    web.py e ranking.py: print() substituido por logger.warning().
+    cli.py usa console.print() do Rich — correto, nao alterado.
 
-[ ] Limpeza automatica de ocultos
-    hidden_articles cresce indefinidamente. Sweep de 90 dias
-    ou aviso ao ultrapassar N entradas.
+[x] Limpeza automatica de ocultos (2026-05-09)
+    cache.py: sweep_hidden(days=90) remove entradas antigas.
+    cache.py: count_hidden() para consulta rapida.
+    Aba Ocultos: botao "Limpar antigos (90d)", aviso ao atingir 100+
+    entradas, e data de quando cada artigo foi ocultado.
 
-[ ] Filtros avancados no CLI
-    Aceitar --year-from, --source, --oa-only como flags
-    que filtram pos-busca usando os campos ja presentes em Article.
+[x] Filtros avancados no CLI (2026-05-09)
+    Flags adicionadas ao comando main:
+    --year-from, --year-to, --source/-s (repetivel), --oa-only
+    Filtros aplicados pos-busca sobre os campos existentes em Article.
 
 ========================================
 CONCLUIDO (historico)
