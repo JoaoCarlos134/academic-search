@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import date
 from typing import Optional
@@ -8,6 +9,7 @@ from src.models import Article
 from src.utils import http_get
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.elsevier.com/content/search/scopus"
 _API_KEY = os.getenv("ELSEVIER_API_KEY", "")
@@ -26,6 +28,7 @@ _AGGREGATION_TYPE_MAP = {
 
 async def search(query: str, limit: int = 20) -> list[Article]:
     if not _API_KEY:
+        logger.debug("ELSEVIER_API_KEY not set; skipping Elsevier provider.")
         return []
 
     headers = {

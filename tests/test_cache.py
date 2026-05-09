@@ -84,6 +84,45 @@ class TestCacheClear:
         assert db.clear() == 0
 
 
+class TestInvalidate:
+    def test_invalidate_single_query(self, db):
+        db.store("q1", [_art("10.1/a")])
+        db.store("q2", [_art("10.1/b")])
+        removed = db.invalidate("q1")
+        assert removed == 1
+        assert db.get("q1") is None
+        assert db.get("q2") is not None
+
+    def test_invalidate_unknown_returns_zero(self, db):
+        assert db.invalidate("never-cached") == 0
+
+
+class TestRecentQueries:
+    def test_empty_when_no_cache(self, db):
+        assert db.list_recent_queries() == []
+
+    def test_returns_distinct_newest_first(self, db):
+        db.store("first", [_art("10.1/a")])
+        db.store("second", [_art("10.1/b")])
+        db.store("third", [_art("10.1/c")])
+        recent = db.list_recent_queries()
+        assert recent == ["third", "second", "first"]
+
+    def test_dedupes_repeated_queries(self, db):
+        db.store("same", [_art("10.1/a")])
+        db.store("other", [_art("10.1/b")])
+        db.store("same", [_art("10.1/c")])  # re-cached
+        recent = db.list_recent_queries()
+        assert recent.count("same") == 1
+        assert recent[0] == "same"  # most recent
+
+    def test_respects_limit(self, db):
+        for i in range(5):
+            db.store(f"q{i}", [_art(f"10.1/{i}")])
+        recent = db.list_recent_queries(limit=3)
+        assert len(recent) == 3
+
+
 class TestHiddenArticles:
     def test_hide_and_get(self, db):
         db.hide_article("10.1/h", "Hidden Paper")

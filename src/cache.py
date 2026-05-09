@@ -102,6 +102,35 @@ def clear() -> int:
         return result.rowcount
 
 
+def invalidate(query: str) -> int:
+    """Delete cached entries for a single query. Returns rows removed."""
+    with Session(_engine) as session:
+        result = session.execute(
+            delete(_CachedArticle).where(_CachedArticle.query == query)
+        )
+        session.commit()
+        return result.rowcount
+
+
+def list_recent_queries(limit: int = 10) -> list[str]:
+    """Return the most recently cached queries (deduped, newest first)."""
+    with Session(_engine) as session:
+        rows = session.execute(
+            select(_CachedArticle.query, _CachedArticle.cached_at)
+            .order_by(_CachedArticle.cached_at.desc())
+        ).all()
+    seen: set[str] = set()
+    out: list[str] = []
+    for q, _ in rows:
+        if q in seen:
+            continue
+        seen.add(q)
+        out.append(q)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def hide_article(doi: str, title: str) -> None:
     with Session(_engine) as session:
         existing = session.get(_HiddenArticle, doi)

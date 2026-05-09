@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (auditoria ROADMAP x codigo concluida)
+Atualizado: 2026-05-09 (quick wins P8/P2/P4/P3 concluidos)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -77,29 +77,6 @@ ALTA PRIORIDADE
     article_cache. Serializar via tensor.numpy().tobytes() / np.frombuffer.
     Reusar mecanismo _migrate() ja existente em cache.py:80-91.
 
-[ ] P2 — Filtros pre-busca uniformes entre CLI e Web
-    Complexidade: BAIXA (~15 linhas)
-    Arquivos: src/cli.py
-    Estado: cli._search_all (cli.py:86) NAO aceita sources — todos os
-    providers sao chamados sempre. web._search_all (web.py:45) ja tem o
-    parametro. Plano: replicar a logica do web._search_all (sources: set),
-    e passar a flag --source ja existente como argumento pre-busca.
-
-[ ] P3 — Historico de buscas na Web
-    Complexidade: BAIXA (~30 linhas)
-    Arquivos: src/cache.py, src/web.py
-    Estado: nenhuma funcao para listar queries recentes. Cache tem cached_at
-    indexado por query. Plano: nova funcao em cache.py
-    list_recent_queries(limit=10) -> list[str] (SELECT DISTINCT query
-    ORDER BY cached_at DESC LIMIT N). UI: dropdown ou pills antes do input.
-
-[ ] P4 — Botao "Atualizar" forcando re-fetch na Web
-    Complexidade: BAIXA (~20 linhas)
-    Arquivos: src/cache.py, src/web.py
-    Estado: cache so pode ser limpo via `search clear-cache` (CLI). UI nao
-    invalida por query. Plano: nova funcao em cache.py invalidate(query) ->
-    int (DELETE WHERE query=?). Botao "Atualizar resultados" ao lado de
-    "Buscar" que invalida e refaz a busca.
 
 ========================================
 MEDIA PRIORIDADE
@@ -138,23 +115,12 @@ MEDIA PRIORIDADE
 BAIXA PRIORIDADE
 ========================================
 
-[ ] P8 — Logger nos providers
-    Complexidade: TRIVIAL (~3 linhas por arquivo)
-    Arquivos: src/providers/openalex.py, elsevier.py, ieee.py
-    Estado: grep "logger" em src/providers/ retorna 0 matches. Sem print()
-    residual — item e preparacao para futuros warnings (rate limit,
-    deprecation, schema mismatch). Plano: adicionar logger = logging.getLogger(__name__)
-    em cada provider.
 
 ========================================
 ORDEM SUGERIDA DE IMPLEMENTACAO
 ========================================
 
-Quick wins (totais ~70 linhas, podem ir num unico PR):
-    1. P8 — Logger nos providers          [trivial, sem dependencias]
-    2. P2 — Filtros uniformes CLI         [baixa, isolado em cli.py]
-    3. P4 — Botao Atualizar Web           [baixa, isolado]
-    4. P3 — Historico de buscas Web       [baixa, isolado]
+Quick wins CONCLUIDOS em 2026-05-09 (P8, P2, P4, P3).
 
 Medias (mais codigo, alto impacto):
     5. P1 — Persistir embeddings SQLite   [media, libera ganho permanente]
@@ -165,7 +131,6 @@ Externo (fora do controle do codigo):
     8. P7 — IEEE API key                  [pode ser feito a qualquer momento]
 
 Dependencias logicas:
-    - P3 e P4 dependem so da estrutura ja existente do cache, podem ir juntos
     - P6 nao bloqueia mas se beneficia muito de P1 (embeddings persistidos)
     - P5 e ortogonal a tudo — pode ser feito a qualquer momento
 
@@ -234,6 +199,22 @@ CONCLUIDO (historico)
     corretamente. Tambem: __eq__ nao verificava isinstance, gerando
     AttributeError ao comparar com nao-Article. Adicionado _norm_doi local
     em models.py (mirror de utils._normalize_doi para evitar import circular).
+
+[x] Quick wins P8/P2/P4/P3 (2026-05-09)
+    P8 — Logger nos providers: openalex/elsevier/ieee agora tem
+         `logger = logging.getLogger(__name__)`. Elsevier e IEEE logam
+         debug quando API key esta ausente.
+    P2 — Filtros pre-busca uniformes CLI: cli._search_all agora aceita
+         `sources: set | None`, replicando a logica de web._search_all.
+         A flag --source da CLI agora pula providers excluidos antes da
+         requisicao (economia de quota). _PROVIDER_NAMES extraido p/ const.
+    P4 — Botao "Atualizar" Web: nova funcao cache.invalidate(query) -> int.
+         UI tem botao "Atualizar" ao lado de "Buscar"; usa cache_invalidate
+         + dispara busca imediata.
+    P3 — Historico de buscas Web: nova funcao cache.list_recent_queries(limit).
+         UI mostra ate 8 buscas recentes como pills clicaveis acima do
+         slider. Click preenche o input e dispara rerender.
+    Tests: 49 -> 55 (+6 em test_cache.py: invalidate, list_recent_queries).
 
 [x] Auditoria ROADMAP x codigo (2026-05-09)
     Cross-referencia de cada item [x] e [ ] do ROADMAP contra o codigo

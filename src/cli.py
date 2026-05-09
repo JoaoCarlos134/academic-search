@@ -40,15 +40,19 @@ def main(
     """Search academic papers across multiple sources."""
     console.print(f"\nBuscando: [bold cyan]{query}[/bold cyan]\n")
 
+    active_sources = set(source) if source else None
+
     cached = cache.get(query, min_size=limit)
     if cached is not None:
         console.print("[dim]cache hit[/dim]")
         ranked = cached
     else:
-        articles = asyncio.run(_search_all(query, limit))
+        articles = asyncio.run(_search_all(query, limit, sources=active_sources))
         ranked = score_articles(articles, query)
         cache.store(query, ranked)
 
+    # Source filter applied post-fetch as well, so cached entries from a
+    # different source set are filtered correctly on subsequent calls.
     results = _apply_filters(ranked, year_from=year_from, year_to=year_to, sources=source, oa_only=oa_only)
     results = results[:limit]
 
@@ -83,15 +87,26 @@ def _apply_filters(
     return out
 
 
-async def _search_all(query: str, limit: int) -> list[Article]:
-    raw = await asyncio.gather(
-        openalex_search(query, limit),
-        elsevier_search(query, limit),
-        ieee_search(query, limit),
-        return_exceptions=True,
-    )
+_PROVIDER_NAMES = ("openalex", "elsevier", "ieee")
+
+
+async def _search_all(
+    query: str,
+    limit: int,
+    sources: Optional[set[str]] = None,
+) -> list[Article]:
+    """Call enabled providers concurrently. If `sources` is given, only those
+    providers are queried (pre-fetch filter — saves API quota)."""
+    fns = [openalex_search, elsevier_search, ieee_search]
+    tasks, names = [], []
+    for name, fn in zip(_PROVIDER_NAMES, fns):
+        if sources is None or name in sources:
+            tasks.append(fn(query, limit))
+            names.append(name)
+
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
     articles: list[Article] = []
-    for name, result in zip(("openalex", "elsevier", "ieee"), raw):
+    for name, result in zip(names, raw):
         if isinstance(result, BaseException):
             console.print(f"[yellow]Aviso: provedor {name} falhou ({result}). Continuando sem ele.[/yellow]")
             continue

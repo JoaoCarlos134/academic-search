@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Optional
 
@@ -7,6 +8,7 @@ from src.models import Article
 from src.utils import http_get
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.openalex.org/works"
 EMAIL = os.getenv("OPENALEX_EMAIL", "")

@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Optional
 
@@ -7,6 +8,7 @@ from src.models import Article
 from src.utils import http_get
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ieeexploreapi.ieee.org/api/v1/search/articles"
 _API_KEY = os.getenv("IEEE_API_KEY", "")
@@ -21,6 +23,7 @@ _CONTENT_TYPE_MAP = {
 
 async def search(query: str, limit: int = 20) -> list[Article]:
     if not _API_KEY:
+        logger.debug("IEEE_API_KEY not set; skipping IEEE provider.")
         return []
 
     params = {

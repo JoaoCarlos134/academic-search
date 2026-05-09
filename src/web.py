@@ -27,6 +27,8 @@ from src.cache import (
     get_hidden_articles,
     get_hidden_dois,
     hide_article,
+    invalidate as cache_invalidate,
+    list_recent_queries,
     sweep_hidden,
     unhide_article,
 )
@@ -338,16 +340,45 @@ def _app() -> None:
             set(f_types) != set(_ALL_TYPES),
         ])
 
-        query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
-        col_lim, col_btn = st.columns([4, 1])
+        query = st.text_input(
+            "Termo de busca",
+            placeholder="ex: machine learning transformers",
+            key="query_input",
+        )
+
+        # ── historico de buscas (pills clicaveis) ─────────────────────────────
+        recent = list_recent_queries(limit=8)
+        if recent:
+            st.caption("Buscas recentes (clique para reusar):")
+            cols = st.columns(min(len(recent), 4))
+            for i, rq in enumerate(recent):
+                with cols[i % len(cols)]:
+                    if st.button(rq[:30] + ("..." if len(rq) > 30 else ""),
+                                 key=f"recent_{i}", use_container_width=True):
+                        st.session_state.query_input = rq
+                        st.rerun()
+
+        col_lim, col_btn, col_refresh = st.columns([3, 1, 1])
         with col_lim:
             limit = st.slider("Limite de resultados", min_value=5, max_value=50, value=10)
         with col_btn:
             st.write("")
             search_clicked = st.button("Buscar", use_container_width=True)
+        with col_refresh:
+            st.write("")
+            refresh_clicked = st.button(
+                "Atualizar",
+                use_container_width=True,
+                help="Invalida o cache desta query e busca de novo nas APIs.",
+            )
 
         if n_active:
             st.info(f"{n_active} filtro(s) ativo(s) — a busca sera realizada ja com esses filtros aplicados.")
+
+        if refresh_clicked and query.strip():
+            removed = cache_invalidate(query.strip())
+            st.toast(f"Cache invalidado ({removed} entrada(s)). Buscando de novo...")
+            search_clicked = True  # cai no fluxo de busca abaixo
 
         if search_clicked:
             if not query.strip():
