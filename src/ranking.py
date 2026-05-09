@@ -31,7 +31,8 @@ def _get_model():
     try:
         from sentence_transformers import SentenceTransformer
         _model = SentenceTransformer("all-MiniLM-L6-v2")
-    except Exception:
+    except Exception as exc:
+        print(f"[ranking] sentence-transformers unavailable, falling back to keyword similarity: {exc}")
         _model = None
     _model_loaded = True
     return _model
@@ -46,12 +47,20 @@ def score_articles(articles: list[Article], query: str) -> list[Article]:
     sources = [SOURCE_WEIGHTS.get(a.source, 0.7) for a in articles]
     citations = _normalize_citations([a.citations for a in articles])
 
+    base_recency = WEIGHTS["recency"]
+    base_citations = WEIGHTS["citations"]
+    swap = base_recency + base_citations  # combined budget that may be redistributed
+
     for i, article in enumerate(articles):
         age = CURRENT_YEAR - (article.year or CURRENT_YEAR)
+        # Recent papers (≤3 years) haven't had time to accrue citations,
+        # so favor recency. Older papers reverse the priority.
         if age <= 3:
-            w_recency, w_citations = WEIGHTS["citations"], WEIGHTS["recency"]
+            w_recency = swap * 0.75
+            w_citations = swap * 0.25
         else:
-            w_recency, w_citations = WEIGHTS["recency"], WEIGHTS["citations"]
+            w_recency = base_recency
+            w_citations = base_citations
         article.score = (
             WEIGHTS["similarity"] * similarities[i]
             + w_recency * recencies[i]
@@ -81,6 +90,8 @@ def _embedding_similarity(articles: list[Article], query: str, model) -> list[fl
 
 def _keyword_similarity(articles: list[Article], query: str) -> list[float]:
     query_words = set(query.lower().split())
+    if not query_words:
+        return [0.0] * len(articles)
     scores = []
     for article in articles:
         text = f"{article.title} {article.abstract or ''}".lower()

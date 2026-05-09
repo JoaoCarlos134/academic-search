@@ -13,11 +13,14 @@ BASE_URL = "https://api.elsevier.com/content/search/scopus"
 _API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 _INST_TOKEN = os.getenv("ELSEVIER_INST_TOKEN", "")
 
-_VENUE_TYPE_MAP = {
+# Mapeamento de prism:aggregationType (tipo de venue) → venue_type interno
+_AGGREGATION_TYPE_MAP = {
     "journal": "journal",
     "trade journal": "journal",
+    "conference proceedings": "conference",
     "conference proceeding": "conference",
     "book series": "book",
+    "book": "book",
 }
 
 
@@ -35,8 +38,8 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         "count": limit,
         "field": (
             "dc:title,prism:doi,prism:coverDate,dc:description,"
-            "author,prism:publicationName,citedby-count,prism:url,"
-            "subtypeDescription,openaccess"
+            "author,prism:publicationName,citedby-count,link,"
+            "prism:aggregationType,openaccess"
         ),
     }
 
@@ -47,20 +50,19 @@ async def search(query: str, limit: int = 20) -> list[Article]:
     articles = []
     for entry in data.get("search-results", {}).get("entry", []):
         citations = int(entry.get("citedby-count") or 0)
-        if citations == 0:
-            continue
+        doi = entry.get("prism:doi")
         articles.append(
             Article(
                 title=entry.get("dc:title") or "",
                 year=_extract_year(entry.get("prism:coverDate")),
-                doi=entry.get("prism:doi"),
+                doi=doi,
                 abstract=entry.get("dc:description"),
                 authors=_extract_authors(entry.get("author", [])),
                 venue=entry.get("prism:publicationName"),
                 source="elsevier",
-                url=entry.get("prism:url"),
+                url=_extract_article_url(entry, doi),
                 citations=citations,
-                venue_type=_extract_venue_type(entry.get("subtypeDescription")),
+                venue_type=_extract_venue_type(entry.get("prism:aggregationType")),
                 publisher=None,
                 is_oa=_extract_oa(entry.get("openaccess")),
                 oa_url=None,
@@ -69,6 +71,18 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         )
 
     return articles
+
+
+def _extract_article_url(entry: dict, doi: Optional[str]) -> Optional[str]:
+    """Prefer scopus '@ref=scopus' link, then DOI, then None."""
+    for link in entry.get("link", []) or []:
+        if link.get("@ref") == "scopus":
+            href = link.get("@href")
+            if href:
+                return href
+    if doi:
+        return f"https://doi.org/{doi}"
+    return None
 
 
 def _extract_year(cover_date: Optional[str]) -> Optional[int]:
@@ -86,10 +100,10 @@ def _extract_authors(authors: list) -> list[str]:
     return [a["authname"] for a in authors if a.get("authname")][:5]
 
 
-def _extract_venue_type(subtype: Optional[str]) -> str:
-    if not subtype:
+def _extract_venue_type(aggregation_type: Optional[str]) -> str:
+    if not aggregation_type:
         return "other"
-    return _VENUE_TYPE_MAP.get(subtype.lower(), "other")
+    return _AGGREGATION_TYPE_MAP.get(aggregation_type.lower(), "other")
 
 
 def _extract_oa(raw: Optional[str | int]) -> Optional[bool]:

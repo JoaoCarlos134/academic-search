@@ -1,10 +1,14 @@
-import httpx
+import os
 from pathlib import Path
+
+import httpx
 from dotenv import load_dotenv
 
 from src.models import Article
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+_VERIFY_SSL = os.getenv("HTTPX_VERIFY_SSL", "true").lower() != "false"
 
 
 async def http_get(
@@ -17,17 +21,29 @@ async def http_get(
     if headers:
         client_kwargs["headers"] = headers
     try:
-        async with httpx.AsyncClient(**client_kwargs, verify=True) as client:
+        async with httpx.AsyncClient(**client_kwargs, verify=_VERIFY_SSL) as client:
             return await client.get(url, params=params or {})
     except httpx.ConnectError as e:
-        if "CERTIFICATE_VERIFY_FAILED" in str(e):
+        if _VERIFY_SSL and "CERTIFICATE_VERIFY_FAILED" in str(e):
             async with httpx.AsyncClient(**client_kwargs, verify=False) as client:
                 return await client.get(url, params=params or {})
         raise
 
 
+def _normalize_doi(doi: str | None) -> str:
+    """Strip URL prefix and lowercase. OpenAlex returns full URLs, others bare DOIs."""
+    if not doi:
+        return ""
+    s = doi.strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return s
+
+
 def dedup_articles(articles: list[Article]) -> list[Article]:
-    """First occurrence wins, keyed by DOI then normalized title.
+    """First occurrence wins, keyed by normalized DOI then normalized title.
 
     OpenAlex/Elsevier/IEEE often index the same paper. Provider order in the
     input list determines which version survives — callers should put the
@@ -36,7 +52,7 @@ def dedup_articles(articles: list[Article]) -> list[Article]:
     seen: set[str] = set()
     result: list[Article] = []
     for a in articles:
-        key = (a.doi or a.title or "").strip().lower()
+        key = _normalize_doi(a.doi) or (a.title or "").strip().lower()
         if not key or key in seen:
             continue
         seen.add(key)

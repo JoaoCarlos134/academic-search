@@ -1,10 +1,15 @@
+import os
 from typing import Optional
+
+from dotenv import load_dotenv
 
 from src.models import Article
 from src.utils import http_get
 
+load_dotenv()
+
 BASE_URL = "https://api.openalex.org/works"
-EMAIL = "seu@email.com"  # coloque seu email aqui (melhora rate limit)
+EMAIL = os.getenv("OPENALEX_EMAIL", "")
 
 _VENUE_TYPE_MAP = {
     "journal": "journal",
@@ -21,10 +26,11 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         "select": (
             "title,publication_year,doi,abstract_inverted_index,"
             "authorships,primary_location,cited_by_count,"
-            "open_access,concepts"
+            "open_access,concepts,id"
         ),
-        "mailto": EMAIL,
     }
+    if EMAIL:
+        params["mailto"] = EMAIL
 
     response = await http_get(BASE_URL, params=params)
     response.raise_for_status()
@@ -34,16 +40,17 @@ async def search(query: str, limit: int = 20) -> list[Article]:
     for work in data.get("results", []):
         location = work.get("primary_location") or {}
         oa = work.get("open_access") or {}
+        doi_url = work.get("doi")
         articles.append(
             Article(
                 title=work.get("title") or "",
                 year=work.get("publication_year"),
-                doi=work.get("doi"),
+                doi=doi_url,
                 abstract=_reconstruct_abstract(work.get("abstract_inverted_index")),
                 authors=_extract_authors(work.get("authorships", [])),
                 venue=_extract_venue_name(location),
                 source="openalex",
-                url=work.get("doi"),
+                url=doi_url or work.get("id"),
                 citations=work.get("cited_by_count", 0),
                 venue_type=_extract_venue_type(location),
                 publisher=_extract_publisher(location),

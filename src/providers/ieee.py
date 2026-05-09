@@ -61,11 +61,12 @@ async def search(query: str, limit: int = 20) -> list[Article]:
 
 
 def _extract_year(raw) -> Optional[int]:
+    from datetime import date
     try:
         year = int(raw)
     except (TypeError, ValueError):
         return None
-    return year if 1000 <= year <= 2100 else None
+    return year if 1000 <= year <= date.today().year + 2 else None
 
 
 def _extract_authors(authors_block: Optional[dict]) -> list[str]:

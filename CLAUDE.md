@@ -34,37 +34,41 @@ This is a CLI academic paper search engine. The entry point is `search` (defined
 
 ### Providers (`src/providers/`)
 
-Each provider is an async function `search(query, limit) -> list[Article]` that hits one external API and maps the response to `Article`. Currently only `openalex.py` is implemented; `elsevier.py` and `ieee.py` are empty stubs.
+Each provider is an async function `search(query, limit) -> list[Article]` that hits one external API and maps the response to `Article`. All three (openalex, elsevier, ieee) are implemented and called concurrently from `_search_all()` in both `cli.py` and `web.py`.
 
-- **OpenAlex** (`openalex.py`): free, no key required. Uses the polite pool via `mailto` — the `EMAIL` constant at the top of the file should be set to a real address for better rate limits. Abstracts are reconstructed from OpenAlex's inverted index format.
-- **Elsevier** (`elsevier.py`): requires `ELSEVIER_API_KEY` and `ELSEVIER_INST_TOKEN` from `.env`.
-- **IEEE** (`ieee.py`): requires `IEEE_API_KEY` from `.env`.
+- **OpenAlex** (`openalex.py`): free, no key required. `OPENALEX_EMAIL` env var enables the polite pool with better rate limits. DOIs come pre-formatted as `https://doi.org/...` URLs. Abstracts are reconstructed from OpenAlex's inverted index format.
+- **Elsevier** (`elsevier.py`): requires `ELSEVIER_API_KEY` and `ELSEVIER_INST_TOKEN` from `.env`. Bare DOIs (no URL prefix) — the `_normalize_doi` helper in `utils.py` reconciles this with OpenAlex's URL-prefixed DOIs during dedup.
+- **IEEE** (`ieee.py`): requires `IEEE_API_KEY` from `.env`. Returns empty list when key is absent.
 
-When adding a new provider, add it to `_search_all()` in `cli.py` (currently only calls OpenAlex) and register its `source` string in `ranking.py`'s `SOURCE_WEIGHTS`.
+When adding a new provider, add it to `_search_all()` in both `cli.py` and `web.py`, register its `source` string in `ranking.py`'s `SOURCE_WEIGHTS`, and ensure DOIs are normalized through `_normalize_doi` for dedup to work.
 
 ### Ranking (`src/ranking.py`)
 
 Scores each `Article` as a weighted sum of four components:
 
-| Component | Weight | Method |
-|-----------|--------|--------|
-| similarity | 50% | Keyword overlap (query words ∩ title+abstract words), normalized |
+| Component | Base weight | Method |
+|-----------|-------------|--------|
+| similarity | 50% | Embedding cosine similarity if sentence-transformers loads, else keyword overlap |
 | recency | 20% | Exponential decay: `exp(-age / 5)` |
 | source | 15% | Lookup in `SOURCE_WEIGHTS` dict |
 | citations | 15% | `log1p`-normalized citation count |
 
-Note: `sentence-transformers` is listed as a dependency but not yet used — similarity is currently keyword-based, not embedding-based.
+For papers ≤3 years old, the recency/citations budget (35% combined) is redistributed 75/25 in favor of recency, since young papers haven't had time to accumulate citations.
+
+The sentence-transformers model loads lazily on first call. If the import fails (no model cached, no internet), it logs a warning and falls back to keyword similarity.
 
 ### Environment
 
-API keys are loaded from `.env` (via `python-dotenv`). Required keys for non-OpenAlex providers:
-- `ELSEVIER_API_KEY`
-- `ELSEVIER_INST_TOKEN`
-- `IEEE_API_KEY`
+API keys are loaded from `.env` (via `python-dotenv`). Variables:
+- `ELSEVIER_API_KEY`, `ELSEVIER_INST_TOKEN` — Scopus
+- `IEEE_API_KEY` — IEEE Xplore
+- `OPENALEX_EMAIL` — optional, enables polite pool
+- `HTTPX_VERIFY_SSL=false` — disable SSL verification (corporate proxies)
+- `CACHE_DB` — override sqlite path (default: `<repo>/academic_cache.db`)
 
-### Stubs
+### Cache (`src/cache.py`)
 
-`src/cache.py` is an empty placeholder for future request caching (SQLAlchemy is already a dependency).
+SQLite via SQLAlchemy. `article_cache` table holds search results keyed by query string with 24h TTL. `hidden_articles` table tracks per-article hide state (no TTL, persistent). All datetimes are stored naive in UTC — SQLite does not preserve `tzinfo`.
 
 ## Conventions
 
@@ -74,8 +78,32 @@ API keys are loaded from `.env` (via `python-dotenv`). Required keys for non-Ope
 - All providers must implement: `async def search(query: str, limit: int) -> list[Article]`
 - Run `search "machine learning" --limit 5` to smoke-test after changes
 
+## Workflow obrigatorio antes de qualquer alteracao
+
+1. **Ler o codigo relevante primeiro** — antes da primeira edicao em qualquer sessao,
+   leia os arquivos que serao tocados. Nunca edite sem ter lido o estado atual.
+
+2. **Atualizar ROADMAP.txt** sempre que:
+   - Um bug for encontrado → adicionar em `ALTA PRIORIDADE` ou `MEDIA PRIORIDADE`
+     com `[ ]` e descricao clara do problema e impacto.
+   - Uma etapa nova for identificada → adicionar na secao de prioridade correta.
+   - Um item for concluido → marcar `[x]` e mover para a secao `CONCLUIDO`
+     com a data no formato `AAAA-MM-DD`.
+   - O trabalho estiver em andamento → marcar `[-]`.
+
+   Formato de entrada no ROADMAP.txt:
+   ```
+   [ ] Titulo curto
+       Descricao do problema ou etapa. Impacto esperado.
+   ```
+
 ## Next steps (priority order)
-1. src/cache.py — SQLite via SQLAlchemy, TTL 24h, keyed by query+doi
-2. src/providers/elsevier.py — Scopus Search API, headers X-ELS-APIKey + X-ELS-Insttoken
-3. src/providers/ieee.py — ieeexploreapi.ieee.org/api/v1/search/articles
-4. Semantic similarity via sentence-transformers (all-MiniLM-L6-v2)
+1. Tests — there are none yet. Start with `dedup_articles`, `_normalize_doi`, ranking edge cases (empty query, no articles), and cache get/set roundtrip.
+2. Cache `limit` awareness — cached results are stored complete, but a query cached with `limit=10` then re-queried with `limit=50` only returns 10. Either re-fetch when requested limit > cached size, or store unbounded and slice on read.
+3. Hidden articles cleanup — `hidden_articles` table grows unbounded and has no UI for bulk export/import. Consider a soft-delete TTL or "archive after 90 days" sweep.
+4. Better failure UI — when a provider fails, the warning lists names but not why. Surface the first error string per provider for easier diagnosis.
+5. Embedding cache — sentence-transformers re-encodes the same articles on every search. Persist embeddings keyed by DOI to skip recomputation.
+
+## Known limitations / surface-level cleanups
+- `print()` warnings should move to `logging` (cli prints rich, web prints to stdout/streamlit logs).
+- `cache.py` raw SQL `INSERT OR IGNORE` was replaced with ORM `session.get` + insert; remaining raw `text()` is only the `_migrate` ALTER TABLE.

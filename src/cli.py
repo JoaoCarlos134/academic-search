@@ -36,7 +36,7 @@ def main(
     """Search academic papers across multiple sources."""
     console.print(f"\nBuscando: [bold cyan]{query}[/bold cyan]\n")
 
-    cached = cache.get(query)
+    cached = cache.get(query, min_size=limit)
     if cached is not None:
         console.print("[dim]cache hit[/dim]")
         ranked = cached

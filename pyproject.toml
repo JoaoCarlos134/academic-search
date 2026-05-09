@@ -12,10 +12,12 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "openpyxl>=3.1.5",
+    "streamlit>=1.57.0",
 ]
 
 [project.scripts]
 search = "src.cli:app"
+academic-web = "src.web:main"
 
 [tool.ruff]
 line-length = 88
@@ -23,3 +25,15 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.29.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

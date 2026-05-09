@@ -1,0 +1,83 @@
+ROADMAP — Academic Search
+=========================
+Atualizado: 2026-05-09
+
+LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
+
+========================================
+ALTA PRIORIDADE — CONCLUIDO EM 2026-05-09
+========================================
+
+[x] Cache limit-aware
+    Busca com limit=10 cacheia 10. Pedido posterior com limit=30 retornava
+    apenas 10. Fix: sempre buscar/armazenar com um teto maior (CACHE_FETCH_LIMIT=50)
+    e fatiar na leitura. Se limit pedido excede o cache, invalida e refaz.
+
+[x] Melhor UI de erro por provedor
+    Exibir a mensagem real do erro (ex: "401 Unauthorized") por provider,
+    nao apenas o nome. Guardado em session_state.provider_errors como dict.
+
+[x] Filtros na pagina de busca
+    Filtrar resultados por: intervalo de ano, tipo de publicacao
+    (journal/conference/book/other), fonte (openalex/elsevier/ieee),
+    e open access. Todos os campos ja existem no Article.
+
+========================================
+MEDIA PRIORIDADE
+========================================
+
+[ ] Testes
+    Sem nenhum teste atualmente. Candidatos:
+    - dedup_articles + _normalize_doi (logica critica de DOI)
+    - ranking com artigos sem ano/abstract
+    - cache get/set roundtrip com TTL
+    - cada provider com resposta mockada
+
+[ ] Paginacao / "carregar mais"
+    Slider vai ate 50. Um botao "Carregar mais" que incrementa o limit
+    e refaz a busca permite acessar resultados alem do limite atual.
+
+[ ] Cache de embeddings
+    sentence-transformers re-codifica todos os artigos a cada busca.
+    Persistir vetores por DOI no SQLite eliminaria reprocessamento.
+    Impacto perceptivel com 30+ artigos.
+
+========================================
+BAIXA PRIORIDADE
+========================================
+
+[ ] Migrar print() para logging
+    web.py e cli.py usam print() para avisos de providers.
+    logging permite filtrar por nivel e capturar no Streamlit.
+
+[ ] Limpeza automatica de ocultos
+    hidden_articles cresce indefinidamente. Sweep de 90 dias
+    ou aviso ao ultrapassar N entradas.
+
+[ ] Filtros avancados no CLI
+    Aceitar --year-from, --source, --oa-only como flags
+    que filtram pos-busca usando os campos ja presentes em Article.
+
+========================================
+CONCLUIDO (historico)
+========================================
+
+[x] Fix Elsevier venue_type sempre retornava "other" (2026-05-09)
+    O provider usava subtypeDescription (tipo de documento: Article, Review)
+    no lugar de prism:aggregationType (tipo de venue: Journal, Conference
+    Proceedings, Book Series). Corrigido para usar o campo certo.
+    Labels do filtro de tipo de publicacao melhorados (journal -> Journal,
+    repository -> Repositorio (preprint), etc.).
+
+[x] Cache SQLite com TTL 24h (SQLAlchemy)
+[x] Provider Elsevier (Scopus Search API)
+[x] Provider IEEE (ieeexploreapi)
+[x] Ranking semantico com sentence-transformers (fallback keyword)
+[x] Interface web Streamlit (busca, selecao, exportacao, ocultos)
+[x] Exportacao TSV / xlsx / BibTeX
+[x] Dedup cross-provider com normalizacao de DOI
+[x] Fix URL Elsevier (era URL da API, agora doi.org)
+[x] Fix timezone no cache (naive UTC)
+[x] Fix inversao de pesos no ranking para artigos novos
+[x] OpenAlex email via OPENALEX_EMAIL no .env
+[x] HTTPX_VERIFY_SSL via env (proxies corporativos)

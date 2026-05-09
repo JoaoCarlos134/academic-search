@@ -32,40 +32,63 @@ from src.providers.openalex import search as openalex_search
 from src.ranking import score_articles
 from src.utils import dedup_articles
 
-
 # ── async orchestrator (same logic as cli.py) ─────────────────────────────────
 
 _PROVIDER_NAMES = ("openalex", "elsevier", "ieee")
 
 
-async def _search_all(query: str, limit: int) -> tuple[list[Article], list[str]]:
-    """Return (deduplicated articles, list of provider names that failed)."""
-    raw = await asyncio.gather(
-        openalex_search(query, limit),
-        elsevier_search(query, limit),
-        ieee_search(query, limit),
-        return_exceptions=True,
-    )
+async def _search_all(
+    query: str,
+    limit: int,
+    sources: set[str] | None = None,
+) -> tuple[list[Article], list[str], dict[str, str]]:
+    """Return (deduplicated articles, failed provider names, errors dict)."""
+    _fns = [openalex_search, elsevier_search, ieee_search]
+    tasks, names = [], []
+    for name, fn in zip(_PROVIDER_NAMES, _fns):
+        if sources is None or name in sources:
+            tasks.append(fn(query, limit))
+            names.append(name)
+
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
     articles: list[Article] = []
     failed: list[str] = []
-    for name, result in zip(_PROVIDER_NAMES, raw):
+    errors: dict[str, str] = {}
+    for name, result in zip(names, raw):
         if isinstance(result, BaseException):
             failed.append(name)
+            errors[name] = str(result)
             print(f"[{name}] provider failed: {result}")
             continue
         articles.extend(result)
-    return dedup_articles(articles), failed
+    return dedup_articles(articles), failed, errors
 
 
-def _fetch(query: str, limit: int) -> tuple[list[Article], bool, list[str]]:
-    """Returns (articles, from_cache, failed_providers)."""
-    cached = cache.get(query)
+# Sempre busca esse total internamente para ter margem de filtragem pós-fetch.
+# O cache guarda todos; a UI fatia para o limit pedido pelo usuário.
+_CACHE_FETCH_LIMIT = 50
+
+
+def _fetch(
+    query: str,
+    limit: int,
+    sources: set[str] | None = None,
+) -> tuple[list[Article], bool, list[str], dict[str, str]]:
+    """Returns (articles, from_cache, failed_providers, provider_errors).
+
+    Articles are unfiltered (year/type/oa filters applied in the UI).
+    The cache always stores up to _CACHE_FETCH_LIMIT results so changing
+    filters doesn't require a new API round-trip.
+    """
+    cached = cache.get(query, min_size=min(limit, _CACHE_FETCH_LIMIT))
     if cached is not None:
-        return cached, True, []
-    articles, failed = asyncio.run(_search_all(query, limit))
+        return cached, True, [], {}
+    articles, failed, errors = asyncio.run(
+        _search_all(query, _CACHE_FETCH_LIMIT, sources=sources)
+    )
     ranked = score_articles(articles, query)
     cache.set(query, ranked)
-    return ranked, False, failed
+    return ranked, False, failed, errors
 
 
 # ── shared field helpers ───────────────────────────────────────────────────────
@@ -257,15 +280,67 @@ def _app() -> None:
 
     tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
 
+    # ── constantes de filtro ──────────────────────────────────────────────────
+    _ALL_SOURCES = ["openalex", "elsevier", "ieee"]
+    _ALL_TYPES = ["journal", "conference", "repository", "book", "other"]
+    _TYPE_LABELS = {
+        "journal": "Journal",
+        "conference": "Conference",
+        "repository": "Repositorio (preprint)",
+        "book": "Livro / Capitulo",
+        "other": "Outro",
+    }
+
     # ── aba Busca ─────────────────────────────────────────────────────────────
     with tab_busca:
+
+        # ── filtros (sempre visiveis, antes da busca) ─────────────────────────
+        with st.expander("Filtros de busca", expanded=False):
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                f_year_from = st.number_input(
+                    "Ano a partir de", min_value=1900, max_value=2100,
+                    value=None, placeholder="qualquer", key="filter_year_from",
+                )
+                f_year_to = st.number_input(
+                    "Ano ate", min_value=1900, max_value=2100,
+                    value=None, placeholder="qualquer", key="filter_year_to",
+                )
+                f_oa = st.checkbox("Somente Open Access", key="filter_oa")
+            with f_col2:
+                f_sources = st.multiselect(
+                    "Fontes a consultar",
+                    options=_ALL_SOURCES,
+                    default=_ALL_SOURCES,
+                    key="filter_sources",
+                )
+                f_types = st.multiselect(
+                    "Tipo de publicacao",
+                    options=_ALL_TYPES,
+                    default=_ALL_TYPES,
+                    format_func=lambda t: _TYPE_LABELS.get(t, t),
+                    key="filter_types",
+                )
+
+        # Contar filtros nao-padrao para mostrar badge
+        n_active = sum([
+            f_year_from is not None,
+            f_year_to is not None,
+            f_oa,
+            sorted(f_sources) != _ALL_SOURCES,
+            sorted(f_types) != _ALL_TYPES,
+        ])
+
         query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
         col_lim, col_btn = st.columns([4, 1])
         with col_lim:
             limit = st.slider("Limite de resultados", min_value=5, max_value=50, value=10)
         with col_btn:
-            st.write("")  # alinha verticalmente com o slider
+            st.write("")
             search_clicked = st.button("Buscar", use_container_width=True)
+
+        if n_active:
+            st.info(f"{n_active} filtro(s) ativo(s) — a busca sera realizada ja com esses filtros aplicados.")
 
         if search_clicked:
             if not query.strip():
@@ -273,13 +348,17 @@ def _app() -> None:
             else:
                 with st.spinner("Buscando..."):
                     try:
-                        results, from_cache, failed = _fetch(query.strip(), limit)
+                        active_sources = set(f_sources) if f_sources else set(_ALL_SOURCES)
+                        results, from_cache, failed, errors = _fetch(
+                            query.strip(), limit, sources=active_sources
+                        )
                         hidden = get_hidden_dois()
                         visible = [a for a in results if _hide_key(a) not in hidden]
                         st.session_state.results = visible
                         st.session_state.hidden_count = len(results) - len(visible)
                         st.session_state.from_cache = from_cache
                         st.session_state.failed_providers = failed
+                        st.session_state.provider_errors = errors
                         st.session_state.search_error = None
                     except httpx.TimeoutException:
                         st.session_state.results = []
@@ -304,24 +383,51 @@ def _app() -> None:
                 st.warning(err)
             else:
                 results: list[Article] = st.session_state.results
-                if not results:
-                    st.warning("Nenhum resultado encontrado.")
-                else:
-                    sliced = results[:limit]
 
+                # aplicar filtros pos-fetch (ano, tipo, oa) sobre o pool completo
+                def _apply_filters(articles: list[Article]) -> list[Article]:
+                    out = []
+                    for a in articles:
+                        if f_year_from is not None and (a.year is None or a.year < f_year_from):
+                            continue
+                        if f_year_to is not None and (a.year is None or a.year > f_year_to):
+                            continue
+                        if f_oa and not a.is_oa:
+                            continue
+                        if sorted(f_types) != _ALL_TYPES and (a.venue_type or "other") not in f_types:
+                            continue
+                        out.append(a)
+                    return out
+
+                filtered = _apply_filters(results)
+                sliced = filtered[:limit]
+
+                if not sliced:
+                    st.warning("Nenhum resultado encontrado com os filtros atuais.")
+                else:
                     # ── header: count + export CSV ────────────────────────────────────────
                     header_col, export_col = st.columns([4, 1])
                     with header_col:
                         origin = "cache" if st.session_state.get("from_cache") else "API"
-                        st.caption(f"{len(sliced)} artigos encontrados  ({origin})")
+                        pool = len(results)
+                        if len(filtered) < pool:
+                            total_label = f"{len(sliced)} de {len(filtered)} (filtrado de {pool})"
+                        else:
+                            total_label = str(len(sliced))
+                        st.caption(f"{total_label} artigos encontrados  ({origin})")
                         hidden_count = st.session_state.get("hidden_count", 0)
                         if hidden_count:
                             st.caption(f"{hidden_count} artigo(s) oculto(s) nesta busca")
                         failed = st.session_state.get("failed_providers") or []
                         if failed:
+                            errors = st.session_state.get("provider_errors") or {}
+                            lines = []
+                            for p in failed:
+                                msg = errors.get(p, "erro desconhecido")
+                                lines.append(f"**{p}**: {msg}")
                             st.warning(
-                                f"Provedores indisponiveis nesta busca: {', '.join(failed)}. "
-                                f"Resultados parciais retornados."
+                                "Provedores indisponiveis nesta busca (resultados parciais):\n\n"
+                                + "\n\n".join(lines)
                             )
                     with export_col:
                         st.download_button(

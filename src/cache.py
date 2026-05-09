@@ -1,15 +1,35 @@
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, create_engine, delete, inspect, select, text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    delete,
+    inspect,
+    select,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from src.models import Article
 
 TTL = timedelta(hours=24)
-_DB_PATH = os.getenv("CACHE_DB", "academic_cache.db")
+_DEFAULT_DB = Path(__file__).resolve().parent.parent / "academic_cache.db"
+_DB_PATH = os.getenv("CACHE_DB", str(_DEFAULT_DB))
 _engine = create_engine(f"sqlite:///{_DB_PATH}")
+
+
+def _utcnow() -> datetime:
+    """Naive UTC datetime — SQLite does not preserve tzinfo."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class _Base(DeclarativeBase):
@@ -22,7 +42,7 @@ class _CachedArticle(_Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     query = Column(String, nullable=False, index=True)
     doi = Column(String, nullable=True)
-    cached_at = Column(DateTime(timezone=True), nullable=False)
+    cached_at = Column(DateTime, nullable=False)
     title = Column(String, nullable=False)
     year = Column(Integer, nullable=True)
     abstract = Column(Text, nullable=True)
@@ -44,7 +64,7 @@ class _HiddenArticle(_Base):
 
     doi = Column(String, primary_key=True)
     title = Column(String, nullable=True)
-    hidden_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    hidden_at = Column(DateTime, nullable=False, default=_utcnow)
 
 
 _Base.metadata.create_all(_engine)
@@ -84,11 +104,10 @@ def clear() -> int:
 
 def hide_article(doi: str, title: str) -> None:
     with Session(_engine) as session:
-        session.execute(
-            text("INSERT OR IGNORE INTO hidden_articles (doi, title, hidden_at) VALUES (:doi, :title, :now)"),
-            {"doi": doi, "title": title, "now": datetime.utcnow()},
-        )
-        session.commit()
+        existing = session.get(_HiddenArticle, doi)
+        if existing is None:
+            session.add(_HiddenArticle(doi=doi, title=title, hidden_at=_utcnow()))
+            session.commit()
 
 
 def get_hidden_dois() -> set[str]:
@@ -117,21 +136,26 @@ def get_hidden_articles() -> list[dict]:
     return [{"doi": r.doi, "title": r.title} for r in rows]
 
 
-def get(query: str) -> list[Article] | None:
-    cutoff = datetime.now(timezone.utc) - TTL
+def get(query: str, min_size: int = 0) -> list[Article] | None:
+    """Return cached articles for query if within TTL and count >= min_size.
+
+    Pass min_size=limit so a cache entry from a smaller prior search never
+    silently caps a larger request.
+    """
+    cutoff = _utcnow() - TTL
     with Session(_engine) as session:
         rows = session.scalars(
             select(_CachedArticle)
             .where(_CachedArticle.query == query)
             .where(_CachedArticle.cached_at >= cutoff)
         ).all()
-    if not rows:
+    if not rows or len(rows) < min_size:
         return None
     return [_to_article(r) for r in rows]
 
 
 def set(query: str, articles: list[Article]) -> None:
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     with Session(_engine) as session:
         session.execute(delete(_CachedArticle).where(_CachedArticle.query == query))
         for article in articles:
