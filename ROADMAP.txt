@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (novas etapas adicionadas apos revisao)
+Atualizado: 2026-05-09 (auditoria ROADMAP x codigo concluida)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -27,10 +27,10 @@ MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ========================================
 
 [x] Testes (2026-05-09)
-    46 testes cobrindo: dedup_articles, _normalize_doi (8 casos),
-    ranking (keyword similarity, recency, citations, score_articles — 12 casos),
-    cache get/set/TTL/min_size/hidden articles (13 casos).
-    Localizacao: tests/test_utils.py, tests/test_ranking.py, tests/test_cache.py
+    49 testes cobrindo: dedup_articles + _normalize_doi + Article hash/eq
+    (tests/test_utils.py, 18 casos), ranking — keyword similarity, recency,
+    citations, score_articles edge cases (tests/test_ranking.py, 18 casos),
+    cache store/get/TTL/min_size/hidden articles (tests/test_cache.py, 13 casos).
 
 [x] Paginacao / "carregar mais" (2026-05-09)
     Implementada dentro do pool cacheado (sem novas chamadas a API).
@@ -67,61 +67,107 @@ BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ALTA PRIORIDADE
 ========================================
 
-[ ] Persistir embeddings no SQLite
-    Hoje _embedding_cache em ranking.py e dict em memoria — perdido ao
-    reiniciar o processo Streamlit. Persistir vetores por DOI no SQLite
-    elimina re-encoding entre sessoes. Cada vetor ~1.5KB (384 floats float32).
-    Adicionar coluna `embedding` (BLOB ou TEXT JSON) na tabela article_cache,
-    ou criar tabela dedicada `article_embeddings(doi, vec)`.
+[ ] P1 — Persistir embeddings no SQLite
+    Complexidade: MEDIA (~80 linhas)
+    Arquivos: src/cache.py, src/ranking.py, tests/
+    Estado: _embedding_cache em ranking.py:32 e dict em memoria — perdido ao
+    reiniciar o processo. Persistir vetores por DOI no SQLite elimina
+    re-encoding entre sessoes. Cada vetor ~1.5KB (384 floats float32).
+    Plano: nova tabela article_embeddings(doi, vec_blob) ou coluna na
+    article_cache. Serializar via tensor.numpy().tobytes() / np.frombuffer.
+    Reusar mecanismo _migrate() ja existente em cache.py:80-91.
 
-[ ] Filtros pre-busca uniformes entre CLI e Web
-    Web tem source filter pre-busca (skip provider) + year/oa/type pos-busca.
-    CLI tem todos pos-busca. Uniformizar: ambos com source pre-busca.
-    Source na CLI deve impedir chamada ao provider excluido (ja existe a
-    logica em web._search_all com sources=set; replicar em cli._search_all).
+[ ] P2 — Filtros pre-busca uniformes entre CLI e Web
+    Complexidade: BAIXA (~15 linhas)
+    Arquivos: src/cli.py
+    Estado: cli._search_all (cli.py:86) NAO aceita sources — todos os
+    providers sao chamados sempre. web._search_all (web.py:45) ja tem o
+    parametro. Plano: replicar a logica do web._search_all (sources: set),
+    e passar a flag --source ja existente como argumento pre-busca.
 
-[ ] Historico de buscas na Web
-    Cache ja guarda queries recentes. Expor como dropdown/lista no Streamlit
-    com as ultimas 10 queries (ordenadas por cached_at desc). Click preenche
-    o input. Util para retomar trabalho. Funcao auxiliar nova em cache.py:
-    list_recent_queries(limit=10) -> list[str].
+[ ] P3 — Historico de buscas na Web
+    Complexidade: BAIXA (~30 linhas)
+    Arquivos: src/cache.py, src/web.py
+    Estado: nenhuma funcao para listar queries recentes. Cache tem cached_at
+    indexado por query. Plano: nova funcao em cache.py
+    list_recent_queries(limit=10) -> list[str] (SELECT DISTINCT query
+    ORDER BY cached_at DESC LIMIT N). UI: dropdown ou pills antes do input.
 
-[ ] Botao "Atualizar" forcando re-fetch na Web
-    Hoje so existe `search clear-cache` no CLI. Na Web, o usuario nao tem
-    como invalidar manualmente o cache de uma query. Adicionar botao
-    "Atualizar resultados" ao lado do "Buscar" que faz cache.invalidate(query)
-    + nova busca. Funcao nova em cache.py: invalidate(query) -> int.
+[ ] P4 — Botao "Atualizar" forcando re-fetch na Web
+    Complexidade: BAIXA (~20 linhas)
+    Arquivos: src/cache.py, src/web.py
+    Estado: cache so pode ser limpo via `search clear-cache` (CLI). UI nao
+    invalida por query. Plano: nova funcao em cache.py invalidate(query) ->
+    int (DELETE WHERE query=?). Botao "Atualizar resultados" ao lado de
+    "Buscar" que invalida e refaz a busca.
 
 ========================================
 MEDIA PRIORIDADE
 ========================================
 
-[ ] Detectar papers retratados via Crossref Retraction Watch
-    A API publica https://api.labs.crossref.org/data/retractionwatch retorna
-    DOIs retratados. Marcar artigos retratados com badge vermelho na UI e
-    flag no Article (retracted: bool | None). Importante para integridade
-    academica. Pode ser checado em batch apos o fetch (uma chamada por busca,
-    nao por artigo).
+[ ] P5 — Detectar papers retratados via Crossref Retraction Watch
+    Complexidade: MEDIA (~80 linhas)
+    Arquivos: src/models.py, src/cache.py, src/utils.py (ou novo src/retractions.py),
+    src/web.py, src/cli.py, tests/
+    Estado: nenhuma referencia a Retraction Watch em parte alguma. Plano:
+    novo campo Article.retracted: bool | None; coluna retracted na
+    article_cache (com migration); funcao batch que checa lista de DOIs
+    contra https://api.labs.crossref.org/data/retractionwatch (uma chamada
+    por busca, nao por artigo); badge vermelho na UI. Confirmar URL/formato
+    da API antes de implementar.
 
-[ ] Agrupamento por topico usando embeddings
-    Usar os embeddings ja calculados (sentence-transformers) para clusterizar
-    resultados via k-means simples (sklearn ou scipy). UI mostra resultados
-    agrupados por cluster com label inferido (top palavras dos titulos do
-    cluster). Util para buscas amplas onde o pool tem subtemas distintos.
+[ ] P6 — Agrupamento por topico usando embeddings
+    Complexidade: ALTA (~100+ linhas)
+    Arquivos: pyproject.toml (dep scikit-learn), novo src/clustering.py,
+    src/web.py
+    Estado: embeddings existem mas so usados para similaridade. Plano:
+    k-means com auto-K (silhouette ou elbow), inferencia de label do cluster
+    via top palavras dos titulos, UI agrupada por cluster. Recomenda-se
+    fazer DEPOIS de P1 (embeddings persistidos) — clustering re-roda a cada
+    busca, e sem persistencia desperdicia o trabalho do sentence-transformers.
 
-[ ] Renovar IEEE API key
-    IEEE_API_KEY esta vazia no .env. Provider funciona mas retorna lista
-    vazia. Obter chave gratuita em https://developer.ieee.org/ e ativar.
-    Sem chave, o filtro de fonte na UI mostra "ieee" mas nunca traz resultados.
+[ ] P7 — Renovar IEEE API key
+    Complexidade: TRIVIAL (nao-codigo)
+    Arquivos: .env
+    Estado: IEEE_API_KEY=  (vazia) na linha 3 do .env. Provider funciona
+    mas retorna lista vazia. Filtro de fonte na UI mostra "ieee" sem nunca
+    trazer resultados. Acao: obter chave em https://developer.ieee.org/
+    e adicionar no .env. Nao toca codigo.
 
 ========================================
 BAIXA PRIORIDADE
 ========================================
 
-[ ] Migrar prints residuais dos providers para logging
-    Providers ainda nao tem logger configurado. Adicionar
-    logger = logging.getLogger(__name__) em openalex/elsevier/ieee e usar
-    em locais de fallback/erro silencioso.
+[ ] P8 — Logger nos providers
+    Complexidade: TRIVIAL (~3 linhas por arquivo)
+    Arquivos: src/providers/openalex.py, elsevier.py, ieee.py
+    Estado: grep "logger" em src/providers/ retorna 0 matches. Sem print()
+    residual — item e preparacao para futuros warnings (rate limit,
+    deprecation, schema mismatch). Plano: adicionar logger = logging.getLogger(__name__)
+    em cada provider.
+
+========================================
+ORDEM SUGERIDA DE IMPLEMENTACAO
+========================================
+
+Quick wins (totais ~70 linhas, podem ir num unico PR):
+    1. P8 — Logger nos providers          [trivial, sem dependencias]
+    2. P2 — Filtros uniformes CLI         [baixa, isolado em cli.py]
+    3. P4 — Botao Atualizar Web           [baixa, isolado]
+    4. P3 — Historico de buscas Web       [baixa, isolado]
+
+Medias (mais codigo, alto impacto):
+    5. P1 — Persistir embeddings SQLite   [media, libera ganho permanente]
+    6. P5 — Papers retratados             [media, valor cientifico]
+    7. P6 — Clustering por topico         [alta, melhor APOS P1]
+
+Externo (fora do controle do codigo):
+    8. P7 — IEEE API key                  [pode ser feito a qualquer momento]
+
+Dependencias logicas:
+    - P3 e P4 dependem so da estrutura ja existente do cache, podem ir juntos
+    - P6 nao bloqueia mas se beneficia muito de P1 (embeddings persistidos)
+    - P5 e ortogonal a tudo — pode ser feito a qualquer momento
 
 ========================================
 DESCARTADAS
@@ -188,3 +234,14 @@ CONCLUIDO (historico)
     corretamente. Tambem: __eq__ nao verificava isinstance, gerando
     AttributeError ao comparar com nao-Article. Adicionado _norm_doi local
     em models.py (mirror de utils._normalize_doi para evitar import circular).
+
+[x] Auditoria ROADMAP x codigo (2026-05-09)
+    Cross-referencia de cada item [x] e [ ] do ROADMAP contra o codigo
+    real em src/. Resultado: todos os 27 itens marcados como concluidos
+    foram confirmados implementados (cada arquivo/funcao mencionada
+    existe). Nenhum item pendente foi encontrado ja implementado.
+    Discrepancias menores corrigidas neste mesmo update:
+    - "46 testes" -> 49 (test count desatualizado)
+    - "cache get/set" -> "cache store/get" (nome antigo)
+    - Adicionado complexidade + arquivos a tocar em todos os pendentes
+    - Adicionada secao ORDEM SUGERIDA DE IMPLEMENTACAO
