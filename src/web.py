@@ -92,7 +92,7 @@ def _fetch(
         _search_all(query, _CACHE_FETCH_LIMIT, sources=sources)
     )
     ranked = score_articles(articles, query)
-    cache.set(query, ranked)
+    cache.store(query, ranked)
     return ranked, False, failed, errors
 
 

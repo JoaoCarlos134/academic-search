@@ -45,17 +45,6 @@ MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
     Persiste enquanto o processo Streamlit estiver rodando.
 
 ========================================
-MEDIA PRIORIDADE
-========================================
-
-[ ] cache.set() shadows o builtin set() no modulo
-    A funcao publica `def set(query, articles)` em cache.py shadowa o builtin
-    `set()` para todo o modulo. Qualquer codigo em cache.py que tente usar
-    `set(rows)` quebra com TypeError. Hoje resolvido com set comprehensions
-    e um comentario, mas a fix definitiva e renomear `cache.set` para
-    `cache.store` ou `cache.put` (breaking change — atualizar cli.py e web.py).
-
-========================================
 BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ========================================
 
@@ -107,6 +96,11 @@ CONCLUIDO (historico)
     `try/except Exception: pass` em volta do `_app()` engolia bugs reais.
     Substituido por `try/except ImportError` em volta apenas do import — erros
     dentro do _app() agora propagam normalmente.
+
+[x] Renomear cache.set -> cache.store (2026-05-09)
+    A funcao publica `def set(query, articles)` em cache.py shadowa o builtin
+    `set()` em todo o modulo, quebrando qualquer chamada interna a set(rows).
+    Renomeada para `cache.store()`. Atualizado cli.py, web.py, tests/test_cache.py.
 
 [x] Fix Article.__hash__/__eq__ nao normalizavam DOI (2026-05-09)
     Mesmo bug que dedup_articles tinha — OpenAlex retorna DOI com prefixo,

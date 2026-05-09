@@ -47,7 +47,7 @@ def main(
     else:
         articles = asyncio.run(_search_all(query, limit))
         ranked = score_articles(articles, query)
-        cache.set(query, ranked)
+        cache.store(query, ranked)
 
     results = _apply_filters(ranked, year_from=year_from, year_to=year_to, sources=source, oa_only=oa_only)
     results = results[:limit]

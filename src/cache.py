@@ -113,8 +113,7 @@ def hide_article(doi: str, title: str) -> None:
 def get_hidden_dois() -> set[str]:
     with Session(_engine) as session:
         rows = session.scalars(select(_HiddenArticle.doi)).all()
-    # Set comprehension (NOT set(rows)) — `def set(...)` below shadows the builtin.
-    return {r for r in rows}
+    return set(rows)
 
 
 def unhide_article(doi: str) -> None:
@@ -157,7 +156,7 @@ def get(query: str, min_size: int = 0) -> list[Article] | None:
     """Return cached articles for query if within TTL and count >= min_size.
 
     Pass min_size=limit so a cache entry from a smaller prior search never
-    silently caps a larger request.
+    silently caps a larger request. Use `store(query, articles)` to save.
     """
     cutoff = _utcnow() - TTL
     with Session(_engine) as session:
@@ -171,7 +170,8 @@ def get(query: str, min_size: int = 0) -> list[Article] | None:
     return [_to_article(r) for r in rows]
 
 
-def set(query: str, articles: list[Article]) -> None:
+def store(query: str, articles: list[Article]) -> None:
+    """Persist articles for a query, replacing any existing entry."""
     now = _utcnow()
     with Session(_engine) as session:
         session.execute(delete(_CachedArticle).where(_CachedArticle.query == query))
