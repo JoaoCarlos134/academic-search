@@ -38,6 +38,8 @@ from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
 from src.ranking import score_articles
 from src.utils import dedup_articles
+from src import retractions
+from src.clustering import cluster_articles
 
 # ── async orchestrator (same logic as cli.py) ─────────────────────────────────
 
@@ -89,11 +91,14 @@ def _fetch(
     """
     cached = cache.get(query, min_size=min(limit, _CACHE_FETCH_LIMIT))
     if cached is not None:
+        # Re-mark retractions in case the dataset was updated since the cache.
+        retractions.mark_retracted(cached)
         return cached, True, [], {}
     articles, failed, errors = asyncio.run(
         _search_all(query, _CACHE_FETCH_LIMIT, sources=sources)
     )
     ranked = score_articles(articles, query)
+    retractions.mark_retracted(ranked)
     cache.store(query, ranked)
     return ranked, False, failed, errors
 
@@ -271,9 +276,41 @@ def _clear_selection() -> None:
 
 # ── Streamlit UI ──────────────────────────────────────────────────────────────
 
+def _retractions_sidebar() -> None:
+    """Sidebar panel: cache status + manual download trigger for Retraction Watch."""
+    with st.sidebar:
+        st.subheader("Retraction Watch")
+        if not retractions.is_cache_present():
+            st.caption("Lista de retratacoes nao baixada (~64 MB).")
+            if st.button("Baixar agora", key="btn_dl_retractions", use_container_width=True):
+                with st.spinner("Baixando lista de retratacoes (pode levar ate 1 min)..."):
+                    try:
+                        size = retractions.download()
+                        st.success(f"Baixado ({size // 1024 // 1024} MB).")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Falha no download: {exc}")
+        else:
+            age = retractions.cache_age_days() or 0
+            n_dois = len(retractions.get_retracted_dois())
+            stale = age >= 7
+            st.caption(f"{n_dois:,} DOIs cadastrados | atualizado ha {age:.1f} dia(s)")
+            if stale:
+                st.warning("Lista desatualizada (>7 dias).")
+            if st.button("Atualizar lista", key="btn_refresh_retractions", use_container_width=True):
+                with st.spinner("Atualizando..."):
+                    try:
+                        retractions.download()
+                        st.success("Lista atualizada.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Falha: {exc}")
+
+
 def _app() -> None:
     st.set_page_config(page_title="Academic Search", layout="wide")
     st.title("Academic Search")
+    _retractions_sidebar()
 
     # Initialize persistent state (outside tabs, always runs)
     if "results" not in st.session_state:
@@ -316,6 +353,11 @@ def _app() -> None:
                     value=None, placeholder="qualquer", key="filter_year_to",
                 )
                 f_oa = st.checkbox("Somente Open Access", key="filter_oa")
+                f_cluster = st.checkbox(
+                    "Agrupar por topico",
+                    key="filter_cluster",
+                    help="K-means sobre os embeddings dos resultados; rotulo via top palavras dos titulos.",
+                )
             with f_col2:
                 f_sources = st.multiselect(
                     "Fontes a consultar",
@@ -489,65 +531,76 @@ def _app() -> None:
                                 _clear_selection()
                                 st.rerun()
 
-                    # ── article cards ─────────────────────────────────────────────────────
-                    for i, a in enumerate(sliced, 1):
-                        article_key = _article_key(a, i)
-                        hide_key = _hide_key(a)
-                        cb_key = f"sel_{article_key}"
-                        with st.container(border=True):
-                            title_col, sel_col, hide_col = st.columns([6, 2, 1])
-                            with title_col:
-                                title = a.title or "(sem titulo)"
-                                link = _article_link(a)
-                                if link:
-                                    st.markdown(f"**{i}. [{title}]({link})**")
+                    # ── article cards (agrupados por topico se f_cluster) ─────────────
+                    if f_cluster:
+                        groups = cluster_articles(sliced)
+                    else:
+                        groups = [{"label": None, "articles": sliced}]
+
+                    i = 0
+                    for grp in groups:
+                        if grp["label"] is not None and len(groups) > 1:
+                            st.markdown(f"### {grp['label']}  *(n={len(grp['articles'])})*")
+                        for a in grp["articles"]:
+                            i += 1
+                            article_key = _article_key(a, i)
+                            hide_key = _hide_key(a)
+                            cb_key = f"sel_{article_key}"
+                            with st.container(border=True):
+                                title_col, sel_col, hide_col = st.columns([6, 2, 1])
+                                with title_col:
+                                    title = a.title or "(sem titulo)"
+                                    link = _article_link(a)
+                                    prefix = ":red[**[RETRATADO]**] " if a.retracted else ""
+                                    if link:
+                                        st.markdown(f"{prefix}**{i}. [{title}]({link})**")
+                                    else:
+                                        st.markdown(f"{prefix}**{i}. {title}**")
+                                with sel_col:
+                                    is_checked = st.checkbox("Selecionar", key=cb_key)
+                                with hide_col:
+                                    if st.button("Ocultar", key=f"hide_{article_key}"):
+                                        hide_article(hide_key, a.title or "")
+                                        st.session_state.results = [
+                                            r for r in st.session_state.results
+                                            if _hide_key(r) != hide_key
+                                        ]
+                                        st.session_state.selected.pop(article_key, None)
+                                        st.session_state[cb_key] = False
+                                        st.rerun()
+
+                                # Sync checkbox state → selected dict
+                                if is_checked:
+                                    st.session_state.selected[article_key] = a
                                 else:
-                                    st.markdown(f"**{i}. {title}**")
-                            with sel_col:
-                                is_checked = st.checkbox("Selecionar", key=cb_key)
-                            with hide_col:
-                                if st.button("Ocultar", key=f"hide_{article_key}"):
-                                    hide_article(hide_key, a.title or "")
-                                    st.session_state.results = [
-                                        r for r in st.session_state.results
-                                        if _hide_key(r) != hide_key
-                                    ]
                                     st.session_state.selected.pop(article_key, None)
-                                    st.session_state[cb_key] = False
-                                    st.rerun()
 
-                            # Sync checkbox state → selected dict
-                            if is_checked:
-                                st.session_state.selected[article_key] = a
-                            else:
-                                st.session_state.selected.pop(article_key, None)
+                                left, right = st.columns([3, 1])
+                                with left:
+                                    if a.authors:
+                                        st.caption(", ".join(a.authors))
+                                    meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
+                                    if meta:
+                                        st.caption(meta)
+                                with right:
+                                    st.caption(f"Score: {a.score:.3f}")
+                                    st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
 
-                            left, right = st.columns([3, 1])
-                            with left:
-                                if a.authors:
-                                    st.caption(", ".join(a.authors))
-                                meta = " | ".join(filter(None, [a.venue, str(a.year) if a.year else None]))
-                                if meta:
-                                    st.caption(meta)
-                            with right:
-                                st.caption(f"Score: {a.score:.3f}")
-                                st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
-
-                            with st.expander("Detalhes", expanded=False):
-                                if a.venue_type:
-                                    st.write(f"Tipo de publicacao: {a.venue_type}")
-                                if a.publisher:
-                                    st.write(f"Editora: {a.publisher}")
-                                if a.is_oa is not None:
-                                    st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
-                                if a.oa_url:
-                                    st.link_button("Acessar versao aberta", a.oa_url)
-                                if a.concepts:
-                                    st.write(f"Topicos: {' | '.join(a.concepts)}")
-                                if a.abstract:
-                                    st.caption(a.abstract)
-                                else:
-                                    st.caption("Abstract nao disponivel")
+                                with st.expander("Detalhes", expanded=False):
+                                    if a.venue_type:
+                                        st.write(f"Tipo de publicacao: {a.venue_type}")
+                                    if a.publisher:
+                                        st.write(f"Editora: {a.publisher}")
+                                    if a.is_oa is not None:
+                                        st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
+                                    if a.oa_url:
+                                        st.link_button("Acessar versao aberta", a.oa_url)
+                                    if a.concepts:
+                                        st.write(f"Topicos: {' | '.join(a.concepts)}")
+                                    if a.abstract:
+                                        st.caption(a.abstract)
+                                    else:
+                                        st.caption("Abstract nao disponivel")
 
                     # ── paginacao dentro do pool cacheado ─────────────────────────────
                     has_more = len(filtered) > display_limit

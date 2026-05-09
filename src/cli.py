@@ -16,6 +16,7 @@ from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
 from src.ranking import score_articles
 from src.utils import dedup_articles
+from src import retractions
 
 app = typer.Typer()
 console = Console()
@@ -50,6 +51,10 @@ def main(
         articles = asyncio.run(_search_all(query, limit, sources=active_sources))
         ranked = score_articles(articles, query)
         cache.store(query, ranked)
+
+    n_retracted = retractions.mark_retracted(ranked)
+    if n_retracted:
+        console.print(f"[red]Atencao: {n_retracted} artigo(s) retratado(s) marcado(s).[/red]")
 
     # Source filter applied post-fetch as well, so cached entries from a
     # different source set are filtered correctly on subsequent calls.
@@ -129,9 +134,12 @@ def _display_results(articles: list[Article]):
     table.add_column("DOI", min_width=20, max_width=35)
 
     for i, a in enumerate(articles, 1):
+        title = a.title[:80] if a.title else "-"
+        if a.retracted:
+            title = f"[red][RETRATADO][/red] {title}"
         table.add_row(
             str(i),
-            a.title[:80] if a.title else "-",
+            title,
             str(a.year) if a.year else "-",
             a.source,
             str(a.citations),
@@ -193,6 +201,18 @@ def clear_cache():
     """Remove all entries from the local search cache."""
     removed = cache.clear()
     console.print(f"[green]Cache limpo: {removed} entrada(s) removida(s).[/green]")
+
+
+@app.command("refresh-retractions")
+def refresh_retractions():
+    """Download or refresh the Retraction Watch dataset (~64 MB)."""
+    console.print("Baixando lista de retratacoes (pode demorar ate 1 min)...")
+    try:
+        size = retractions.download()
+        n = len(retractions.get_retracted_dois())
+        console.print(f"[green]OK. {n:,} DOIs ({size // 1024 // 1024} MB).[/green]")
+    except Exception as exc:
+        console.print(f"[red]Falha: {exc}[/red]")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (quick wins P8/P2/P4/P3 concluidos)
+Atualizado: 2026-05-09 (mediums P1/P5/P6 concluidos)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -63,45 +63,10 @@ BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
     --year-from, --year-to, --source/-s (repetivel), --oa-only
     Filtros aplicados pos-busca sobre os campos existentes em Article.
 
-========================================
-ALTA PRIORIDADE
-========================================
-
-[ ] P1 — Persistir embeddings no SQLite
-    Complexidade: MEDIA (~80 linhas)
-    Arquivos: src/cache.py, src/ranking.py, tests/
-    Estado: _embedding_cache em ranking.py:32 e dict em memoria — perdido ao
-    reiniciar o processo. Persistir vetores por DOI no SQLite elimina
-    re-encoding entre sessoes. Cada vetor ~1.5KB (384 floats float32).
-    Plano: nova tabela article_embeddings(doi, vec_blob) ou coluna na
-    article_cache. Serializar via tensor.numpy().tobytes() / np.frombuffer.
-    Reusar mecanismo _migrate() ja existente em cache.py:80-91.
-
 
 ========================================
 MEDIA PRIORIDADE
 ========================================
-
-[ ] P5 — Detectar papers retratados via Crossref Retraction Watch
-    Complexidade: MEDIA (~80 linhas)
-    Arquivos: src/models.py, src/cache.py, src/utils.py (ou novo src/retractions.py),
-    src/web.py, src/cli.py, tests/
-    Estado: nenhuma referencia a Retraction Watch em parte alguma. Plano:
-    novo campo Article.retracted: bool | None; coluna retracted na
-    article_cache (com migration); funcao batch que checa lista de DOIs
-    contra https://api.labs.crossref.org/data/retractionwatch (uma chamada
-    por busca, nao por artigo); badge vermelho na UI. Confirmar URL/formato
-    da API antes de implementar.
-
-[ ] P6 — Agrupamento por topico usando embeddings
-    Complexidade: ALTA (~100+ linhas)
-    Arquivos: pyproject.toml (dep scikit-learn), novo src/clustering.py,
-    src/web.py
-    Estado: embeddings existem mas so usados para similaridade. Plano:
-    k-means com auto-K (silhouette ou elbow), inferencia de label do cluster
-    via top palavras dos titulos, UI agrupada por cluster. Recomenda-se
-    fazer DEPOIS de P1 (embeddings persistidos) — clustering re-roda a cada
-    busca, e sem persistencia desperdicia o trabalho do sentence-transformers.
 
 [ ] P7 — Renovar IEEE API key
     Complexidade: TRIVIAL (nao-codigo)
@@ -117,22 +82,20 @@ BAIXA PRIORIDADE
 
 
 ========================================
-ORDEM SUGERIDA DE IMPLEMENTACAO
+ESTADO ATUAL
 ========================================
 
-Quick wins CONCLUIDOS em 2026-05-09 (P8, P2, P4, P3).
+Concluidos:
+    - Quick wins (P8, P2, P4, P3) em 2026-05-09
+    - Mediums (P1, P5, P6) em 2026-05-09
 
-Medias (mais codigo, alto impacto):
-    5. P1 — Persistir embeddings SQLite   [media, libera ganho permanente]
-    6. P5 — Papers retratados             [media, valor cientifico]
-    7. P6 — Clustering por topico         [alta, melhor APOS P1]
+Pendentes:
+    - P7 — IEEE API key (externo, nao-codigo)
 
-Externo (fora do controle do codigo):
-    8. P7 — IEEE API key                  [pode ser feito a qualquer momento]
-
-Dependencias logicas:
-    - P6 nao bloqueia mas se beneficia muito de P1 (embeddings persistidos)
-    - P5 e ortogonal a tudo — pode ser feito a qualquer momento
+Pos-mediums vale considerar (nao prioridade):
+    - UI: filtro "Excluir retratados" no expander de filtros
+    - CLI: flag --no-retracted equivalente
+    - Telemetria: adicionar metric/log para hits de embedding cache (sqlite vs encode)
 
 ========================================
 DESCARTADAS
@@ -199,6 +162,28 @@ CONCLUIDO (historico)
     corretamente. Tambem: __eq__ nao verificava isinstance, gerando
     AttributeError ao comparar com nao-Article. Adicionado _norm_doi local
     em models.py (mirror de utils._normalize_doi para evitar import circular).
+
+[x] Mediums P1/P5/P6 (2026-05-09)
+    P1 — Persistir embeddings no SQLite: nova tabela article_embeddings
+         (key, vec BLOB, dim, created_at) em cache.py. ranking.py agora
+         tem hierarquia 3-camadas: dict in-memoria -> SQLite -> encode novo.
+         Embeddings sobrevivem reinicio do processo Streamlit/CLI.
+         Funcoes: cache.get_embeddings_batch, store_embeddings_batch, count_embeddings.
+    P5 — Detectar papers retratados (Retraction Watch): novo modulo
+         src/retractions.py. Cache local do CSV (~64MB) com TTL 7 dias.
+         Article.retracted: bool | None novo campo. Coluna nova com
+         migration. Web: badge ":red[**[RETRATADO]**]" nos cards + sidebar
+         "Retraction Watch" com botao baixar/atualizar. CLI: marca artigos
+         + comando `search refresh-retractions`. mark_retracted() e silent
+         no-op quando cache local nao existe (download opt-in).
+    P6 — Agrupamento por topico: novo modulo src/clustering.py.
+         K-means com auto-K via silhouette score (max 5 clusters, min 2
+         artigos por cluster). Inferencia de rotulo via top tokens dos
+         titulos (stop-words filtradas). Toggle "Agrupar por topico" no
+         expander de filtros. Cards renderizados sob headers de tema.
+         Reutiliza embeddings ja calculados pelo ranking.
+    Tests: 55 -> 74 (+6 embeddings, +6 retractions, +7 clustering).
+    Dependencias: scikit-learn (ja instalada via outra dep, agora explicita).
 
 [x] Quick wins P8/P2/P4/P3 (2026-05-09)
     P8 — Logger nos providers: openalex/elsevier/ieee agora tem

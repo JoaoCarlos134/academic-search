@@ -13,6 +13,7 @@ build/
 # Database/cache local
 *.db
 *.sqlite
+retractions_cache.csv
 
 # VS Code
 .vscode/

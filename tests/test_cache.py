@@ -97,6 +97,39 @@ class TestInvalidate:
         assert db.invalidate("never-cached") == 0
 
 
+class TestEmbeddingsCache:
+    def test_store_and_retrieve(self, db):
+        vec = b"\x00\x01\x02\x03" * 96  # 384 bytes = 96 float32
+        db.store_embeddings_batch([("10.1/x", vec, 96)])
+        out = db.get_embeddings_batch(["10.1/x"])
+        assert "10.1/x" in out
+        assert out["10.1/x"] == (vec, 96)
+
+    def test_get_batch_returns_only_present(self, db):
+        db.store_embeddings_batch([("a", b"\x00" * 4, 1)])
+        out = db.get_embeddings_batch(["a", "b", "c"])
+        assert set(out.keys()) == {"a"}
+
+    def test_store_skips_existing_key(self, db):
+        db.store_embeddings_batch([("dup", b"\x01\x02\x03\x04", 1)])
+        # Second store with different vec should be silently ignored
+        db.store_embeddings_batch([("dup", b"\xff\xff\xff\xff", 1)])
+        out = db.get_embeddings_batch(["dup"])
+        assert out["dup"][0] == b"\x01\x02\x03\x04"
+
+    def test_count_embeddings(self, db):
+        assert db.count_embeddings() == 0
+        db.store_embeddings_batch([
+            ("k1", b"\x00" * 4, 1),
+            ("k2", b"\x00" * 4, 1),
+        ])
+        assert db.count_embeddings() == 2
+
+    def test_empty_batches_are_noops(self, db):
+        db.store_embeddings_batch([])  # should not raise
+        assert db.get_embeddings_batch([]) == {}
+
+
 class TestRecentQueries:
     def test_empty_when_no_cache(self, db):
         assert db.list_recent_queries() == []

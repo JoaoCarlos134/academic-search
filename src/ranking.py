@@ -87,19 +87,70 @@ def _compute_similarity(articles: list[Article], query: str) -> list[float]:
 
 
 def _article_cache_key(article: Article) -> str:
-    return article.doi or article.title or ""
+    """Match utils._normalize_doi to keep keys stable across providers."""
+    doi = article.doi
+    if doi:
+        s = doi.strip().lower()
+        for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+            if s.startswith(prefix):
+                return s[len(prefix):]
+        return s
+    return (article.title or "").strip().lower()
+
+
+def _tensor_to_bytes(tensor) -> bytes:
+    import numpy as np
+    return tensor.detach().cpu().numpy().astype(np.float32).tobytes()
+
+
+def _bytes_to_tensor(data: bytes, dim: int):
+    import numpy as np
+    import torch
+    arr = np.frombuffer(data, dtype=np.float32).reshape(dim).copy()
+    return torch.from_numpy(arr)
 
 
 def _embedding_similarity(articles: list[Article], query: str, model) -> list[float]:
-    # Encode only articles not already in the in-process cache
-    miss_indices = [i for i, a in enumerate(articles) if _article_cache_key(a) not in _embedding_cache]
-    if miss_indices:
-        miss_texts = [f"{articles[i].title} {articles[i].abstract or ''}" for i in miss_indices]
-        miss_embs = model.encode(miss_texts, convert_to_tensor=True)
-        for i, emb in zip(miss_indices, miss_embs):
-            _embedding_cache[_article_cache_key(articles[i])] = emb
+    """Cache hierarchy: in-memory dict → SQLite → encode + persist."""
+    from src import cache  # local import to avoid hard dependency in unit tests
 
-    doc_embs = [_embedding_cache[_article_cache_key(a)] for a in articles]
+    keys = [_article_cache_key(a) for a in articles]
+
+    # Layer 1: hydrate in-memory cache from SQLite for missing keys
+    persisted_misses = [k for k in keys if k and k not in _embedding_cache]
+    if persisted_misses:
+        try:
+            stored = cache.get_embeddings_batch(persisted_misses)
+            for k, (vec_bytes, dim) in stored.items():
+                _embedding_cache[k] = _bytes_to_tensor(vec_bytes, dim)
+        except Exception as exc:
+            logger.warning("Could not load embeddings from SQLite: %s", exc)
+
+    # Layer 2: encode anything still missing
+    encode_indices = [i for i, k in enumerate(keys) if k and k not in _embedding_cache]
+    if encode_indices:
+        encode_texts = [f"{articles[i].title} {articles[i].abstract or ''}" for i in encode_indices]
+        encoded = model.encode(encode_texts, convert_to_tensor=True)
+        new_items = []
+        for idx, emb in zip(encode_indices, encoded):
+            k = keys[idx]
+            _embedding_cache[k] = emb
+            new_items.append((k, _tensor_to_bytes(emb), int(emb.shape[-1])))
+        try:
+            cache.store_embeddings_batch(new_items)
+        except Exception as exc:
+            logger.warning("Could not persist embeddings to SQLite: %s", exc)
+
+    # Articles without a usable key (no DOI nor title) get encoded fresh each call.
+    fallback_keys = {i: k for i, k in enumerate(keys) if not k}
+    if fallback_keys:
+        fallback_texts = [f"{articles[i].title or ''} {articles[i].abstract or ''}" for i in fallback_keys]
+        fallback_embs = model.encode(fallback_texts, convert_to_tensor=True)
+        fallback_map = dict(zip(fallback_keys.keys(), fallback_embs))
+    else:
+        fallback_map = {}
+
+    doc_embs = [fallback_map[i] if not k else _embedding_cache[k] for i, k in enumerate(keys)]
     query_emb = model.encode([query], convert_to_tensor=True)[0]
     scores = [float(model.similarity(query_emb, d)) for d in doc_embs]
     # similarity() returns [-1, 1]; shift to [0, 1]

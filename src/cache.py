@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    LargeBinary,
     String,
     Text,
     create_engine,
@@ -57,6 +58,7 @@ class _CachedArticle(_Base):
     is_oa = Column(Boolean, nullable=True)
     oa_url = Column(String, nullable=True)
     concepts = Column(Text, nullable=True)  # JSON-encoded list[str] | None
+    retracted = Column(Boolean, nullable=True)
 
 
 class _HiddenArticle(_Base):
@@ -67,6 +69,17 @@ class _HiddenArticle(_Base):
     hidden_at = Column(DateTime, nullable=False, default=_utcnow)
 
 
+class _ArticleEmbedding(_Base):
+    """Persisted sentence-transformer embeddings keyed by DOI/title."""
+
+    __tablename__ = "article_embeddings"
+
+    key = Column(String, primary_key=True)  # _normalize_doi(doi) or title
+    vec = Column(LargeBinary, nullable=False)  # float32 bytes
+    dim = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+
 _Base.metadata.create_all(_engine)
 _EXTRA_COLS = {
     "venue_type": "VARCHAR",
@@ -74,6 +87,7 @@ _EXTRA_COLS = {
     "is_oa": "BOOLEAN",
     "oa_url": "VARCHAR",
     "concepts": "TEXT",
+    "retracted": "BOOLEAN",
 }
 
 
@@ -224,9 +238,37 @@ def store(query: str, articles: list[Article]) -> None:
                     is_oa=article.is_oa,
                     oa_url=article.oa_url,
                     concepts=json.dumps(article.concepts) if article.concepts is not None else None,
+                    retracted=article.retracted,
                 )
             )
         session.commit()
+
+
+def get_embeddings_batch(keys: list[str]) -> dict[str, tuple[bytes, int]]:
+    """Return {key: (vec_bytes, dim)} for keys present in the embeddings table."""
+    if not keys:
+        return {}
+    with Session(_engine) as session:
+        rows = session.scalars(
+            select(_ArticleEmbedding).where(_ArticleEmbedding.key.in_(keys))
+        ).all()
+    return {r.key: (r.vec, r.dim) for r in rows}
+
+
+def store_embeddings_batch(items: list[tuple[str, bytes, int]]) -> None:
+    """Insert (key, vec_bytes, dim) tuples. Skips keys already present."""
+    if not items:
+        return
+    with Session(_engine) as session:
+        for key, vec, dim in items:
+            if session.get(_ArticleEmbedding, key) is None:
+                session.add(_ArticleEmbedding(key=key, vec=vec, dim=dim, created_at=_utcnow()))
+        session.commit()
+
+
+def count_embeddings() -> int:
+    with Session(_engine) as session:
+        return session.query(_ArticleEmbedding).count()
 
 
 def _to_article(row: _CachedArticle) -> Article:
@@ -246,4 +288,5 @@ def _to_article(row: _CachedArticle) -> Article:
         is_oa=row.is_oa,
         oa_url=row.oa_url,
         concepts=json.loads(row.concepts) if row.concepts is not None else None,
+        retracted=row.retracted,
     )
