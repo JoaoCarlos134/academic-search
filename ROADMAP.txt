@@ -1,6 +1,6 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (todas as prioridades concluidas)
+Atualizado: 2026-05-09 (novas etapas adicionadas apos revisao)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
@@ -62,6 +62,80 @@ BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
     Flags adicionadas ao comando main:
     --year-from, --year-to, --source/-s (repetivel), --oa-only
     Filtros aplicados pos-busca sobre os campos existentes em Article.
+
+========================================
+ALTA PRIORIDADE
+========================================
+
+[ ] Persistir embeddings no SQLite
+    Hoje _embedding_cache em ranking.py e dict em memoria — perdido ao
+    reiniciar o processo Streamlit. Persistir vetores por DOI no SQLite
+    elimina re-encoding entre sessoes. Cada vetor ~1.5KB (384 floats float32).
+    Adicionar coluna `embedding` (BLOB ou TEXT JSON) na tabela article_cache,
+    ou criar tabela dedicada `article_embeddings(doi, vec)`.
+
+[ ] Filtros pre-busca uniformes entre CLI e Web
+    Web tem source filter pre-busca (skip provider) + year/oa/type pos-busca.
+    CLI tem todos pos-busca. Uniformizar: ambos com source pre-busca.
+    Source na CLI deve impedir chamada ao provider excluido (ja existe a
+    logica em web._search_all com sources=set; replicar em cli._search_all).
+
+[ ] Historico de buscas na Web
+    Cache ja guarda queries recentes. Expor como dropdown/lista no Streamlit
+    com as ultimas 10 queries (ordenadas por cached_at desc). Click preenche
+    o input. Util para retomar trabalho. Funcao auxiliar nova em cache.py:
+    list_recent_queries(limit=10) -> list[str].
+
+[ ] Botao "Atualizar" forcando re-fetch na Web
+    Hoje so existe `search clear-cache` no CLI. Na Web, o usuario nao tem
+    como invalidar manualmente o cache de uma query. Adicionar botao
+    "Atualizar resultados" ao lado do "Buscar" que faz cache.invalidate(query)
+    + nova busca. Funcao nova em cache.py: invalidate(query) -> int.
+
+========================================
+MEDIA PRIORIDADE
+========================================
+
+[ ] Detectar papers retratados via Crossref Retraction Watch
+    A API publica https://api.labs.crossref.org/data/retractionwatch retorna
+    DOIs retratados. Marcar artigos retratados com badge vermelho na UI e
+    flag no Article (retracted: bool | None). Importante para integridade
+    academica. Pode ser checado em batch apos o fetch (uma chamada por busca,
+    nao por artigo).
+
+[ ] Agrupamento por topico usando embeddings
+    Usar os embeddings ja calculados (sentence-transformers) para clusterizar
+    resultados via k-means simples (sklearn ou scipy). UI mostra resultados
+    agrupados por cluster com label inferido (top palavras dos titulos do
+    cluster). Util para buscas amplas onde o pool tem subtemas distintos.
+
+[ ] Renovar IEEE API key
+    IEEE_API_KEY esta vazia no .env. Provider funciona mas retorna lista
+    vazia. Obter chave gratuita em https://developer.ieee.org/ e ativar.
+    Sem chave, o filtro de fonte na UI mostra "ieee" mas nunca traz resultados.
+
+========================================
+BAIXA PRIORIDADE
+========================================
+
+[ ] Migrar prints residuais dos providers para logging
+    Providers ainda nao tem logger configurado. Adicionar
+    logger = logging.getLogger(__name__) em openalex/elsevier/ieee e usar
+    em locais de fallback/erro silencioso.
+
+========================================
+DESCARTADAS
+========================================
+
+[~] Resumos em portugues via Anthropic Haiku
+    Avaliado: traduzir/resumir abstracts em portugues sob demanda.
+    Custo estimado: ~$0.005 por sessao tipica (com cache + sob demanda).
+    Decisao: descartado. Justificativa principal ("maior parte dos artigos
+    sem resumo") deixou de valer apos fix do view=COMPLETE no Elsevier
+    (passou de 100% sem abstract para 0%). OpenAlex ainda tem 36% sem
+    abstract mas LLM nao tem o conteudo do paper para gerar resumo
+    confiavel — risco de hallucination. Reavaliar se a equipe quiser
+    traducao automatica de abstracts em ingles para portugues.
 
 ========================================
 CONCLUIDO (historico)
