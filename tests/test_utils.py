@@ -75,3 +75,25 @@ class TestDedupArticles:
 
     def test_empty_input(self):
         assert dedup_articles([]) == []
+
+
+class TestArticleHashEq:
+    """Article must hash/eq consistently across DOI URL prefixes."""
+
+    def test_same_doi_different_prefix_eq(self):
+        a = _art("https://doi.org/10.1/x")
+        b = _art("10.1/x")
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_set_dedup(self):
+        a = _art("https://doi.org/10.1/x")
+        b = _art("10.1/x")
+        assert len({a, b}) == 1
+
+    def test_eq_with_non_article_returns_notimplemented(self):
+        a = _art("10.1/x")
+        # Should not raise AttributeError on `other.doi`
+        assert (a == "string") is False
+        assert (a == 42) is False
+        assert (a == None) is False  # noqa: E711

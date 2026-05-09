@@ -2,6 +2,18 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def _norm_doi(doi: Optional[str]) -> str:
+    """Strip URL prefix and lowercase. Mirrors utils._normalize_doi to keep
+    Article hashable without circular import."""
+    if not doi:
+        return ""
+    s = doi.strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+        if s.startswith(prefix):
+            return s[len(prefix):]
+    return s
+
+
 @dataclass
 class Article:
     title: str
@@ -21,9 +33,11 @@ class Article:
     concepts: list[str] | None = None
 
     def __hash__(self):
-        return hash(self.doi or self.title)
+        return hash(_norm_doi(self.doi) or (self.title or ""))
 
     def __eq__(self, other):
+        if not isinstance(other, Article):
+            return NotImplemented
         if self.doi and other.doi:
-            return self.doi == other.doi
+            return _norm_doi(self.doi) == _norm_doi(other.doi)
         return self.title == other.title

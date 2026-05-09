@@ -334,8 +334,8 @@ def _app() -> None:
             f_year_from is not None,
             f_year_to is not None,
             f_oa,
-            sorted(f_sources) != _ALL_SOURCES,
-            sorted(f_types) != _ALL_TYPES,
+            set(f_sources) != set(_ALL_SOURCES),
+            set(f_types) != set(_ALL_TYPES),
         ])
 
         query = st.text_input("Termo de busca", placeholder="ex: machine learning transformers")
@@ -402,7 +402,7 @@ def _app() -> None:
                             continue
                         if f_oa and not a.is_oa:
                             continue
-                        if sorted(f_types) != _ALL_TYPES and (a.venue_type or "other") not in f_types:
+                        if set(f_types) != set(_ALL_TYPES) and (a.venue_type or "other") not in f_types:
                             continue
                         out.append(a)
                     return out
@@ -520,7 +520,6 @@ def _app() -> None:
 
                     # ── paginacao dentro do pool cacheado ─────────────────────────────
                     has_more = len(filtered) > display_limit
-                    all_shown = display_limit >= len(filtered)
                     if has_more or display_limit > limit:
                         pg_col, reset_col = st.columns([3, 1])
                         with pg_col:
@@ -673,10 +672,12 @@ def main() -> None:
 # Streamlit re-executa este arquivo a cada interacao do usuario.
 # O guard garante que _app() so roda dentro de uma sessao Streamlit ativa,
 # evitando erros quando o modulo e importado pelo script `academic-web`.
+# IMPORTANTE: capturamos apenas ImportError (esperado fora do contexto Streamlit).
+# Erros dentro de _app() devem propagar para nao serem silenciados.
 try:
     from streamlit.runtime.scriptrunner import get_script_run_ctx as _get_ctx
+except ImportError:
+    _get_ctx = None
 
-    if _get_ctx() is not None:
-        _app()
-except Exception:
-    pass
+if _get_ctx is not None and _get_ctx() is not None:
+    _app()

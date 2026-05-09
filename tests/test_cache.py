@@ -1,5 +1,3 @@
-import os
-import tempfile
 import pytest
 from datetime import timedelta
 from src.models import Article

@@ -45,6 +45,17 @@ MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
     Persiste enquanto o processo Streamlit estiver rodando.
 
 ========================================
+MEDIA PRIORIDADE
+========================================
+
+[ ] cache.set() shadows o builtin set() no modulo
+    A funcao publica `def set(query, articles)` em cache.py shadowa o builtin
+    `set()` para todo o modulo. Qualquer codigo em cache.py que tente usar
+    `set(rows)` quebra com TypeError. Hoje resolvido com set comprehensions
+    e um comentario, mas a fix definitiva e renomear `cache.set` para
+    `cache.store` ou `cache.put` (breaking change — atualizar cli.py e web.py).
+
+========================================
 BAIXA PRIORIDADE — CONCLUIDO EM 2026-05-09
 ========================================
 
@@ -86,3 +97,20 @@ CONCLUIDO (historico)
 [x] Fix inversao de pesos no ranking para artigos novos
 [x] OpenAlex email via OPENALEX_EMAIL no .env
 [x] HTTPX_VERIFY_SSL via env (proxies corporativos)
+
+[x] Fix badge "filtros ativos" sempre contava +2 (2026-05-09)
+    n_active comparava sorted(f_sources) != _ALL_SOURCES, mas _ALL_SOURCES nao
+    estava em ordem alfabetica — comparacao sempre True. Trocado para set != set.
+    Mesma correcao em _apply_filters para o filtro de tipos.
+
+[x] Fix entry point Streamlit silenciava erros do _app() (2026-05-09)
+    `try/except Exception: pass` em volta do `_app()` engolia bugs reais.
+    Substituido por `try/except ImportError` em volta apenas do import — erros
+    dentro do _app() agora propagam normalmente.
+
+[x] Fix Article.__hash__/__eq__ nao normalizavam DOI (2026-05-09)
+    Mesmo bug que dedup_articles tinha — OpenAlex retorna DOI com prefixo,
+    Elsevier retorna bare. Article posto em set/dict nao deduplicava
+    corretamente. Tambem: __eq__ nao verificava isinstance, gerando
+    AttributeError ao comparar com nao-Article. Adicionado _norm_doi local
+    em models.py (mirror de utils._normalize_doi para evitar import circular).

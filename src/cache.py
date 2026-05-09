@@ -113,6 +113,7 @@ def hide_article(doi: str, title: str) -> None:
 def get_hidden_dois() -> set[str]:
     with Session(_engine) as session:
         rows = session.scalars(select(_HiddenArticle.doi)).all()
+    # Set comprehension (NOT set(rows)) — `def set(...)` below shadows the builtin.
     return {r for r in rows}
 
 
