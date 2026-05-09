@@ -97,6 +97,12 @@ CONCLUIDO (historico)
     Substituido por `try/except ImportError` em volta apenas do import — erros
     dentro do _app() agora propagam normalmente.
 
+[x] Fix Elsevier 100% sem abstract (2026-05-09)
+    Provider nao passava view=COMPLETE na requisicao. View padrao STANDARD
+    nao inclui dc:description (abstract). Resultado: 100% dos artigos da
+    Elsevier vinham sem abstract, degradando ranking semantico, exportacao
+    BibTeX e UI. Apos fix: 0% sem abstract (vs 36% no OpenAlex, esperado).
+
 [x] Renomear cache.set -> cache.store (2026-05-09)
     A funcao publica `def set(query, articles)` em cache.py shadowa o builtin
     `set()` em todo o modulo, quebrando qualquer chamada interna a set(rows).
