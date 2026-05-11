@@ -566,7 +566,7 @@ def _app() -> None:
                                             if _hide_key(r) != hide_key
                                         ]
                                         st.session_state.selected.pop(article_key, None)
-                                        st.session_state[cb_key] = False
+                                        st.session_state.pop(cb_key, None)
                                         st.rerun()
 
                                 # Sync checkbox state → selected dict
