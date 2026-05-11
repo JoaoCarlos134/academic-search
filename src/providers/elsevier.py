@@ -38,9 +38,8 @@ async def search(query: str, limit: int = 20) -> list[Article]:
     }
     params = {
         "query": query,
-        "count": limit,
-        # view=COMPLETE is required to include dc:description (the abstract).
-        # The default STANDARD view returns metadata only.
+        # view=COMPLETE is required for dc:description but caps results at 25.
+        "count": min(limit, 25),
         "view": "COMPLETE",
     }
 
