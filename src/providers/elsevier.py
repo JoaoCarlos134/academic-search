@@ -8,12 +8,9 @@ from dotenv import load_dotenv
 from src.models import Article
 from src.utils import http_get
 
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.elsevier.com/content/search/scopus"
-_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
-_INST_TOKEN = os.getenv("ELSEVIER_INST_TOKEN", "")
 
 # Mapeamento de prism:aggregationType (tipo de venue) → venue_type interno
 _AGGREGATION_TYPE_MAP = {
@@ -27,13 +24,16 @@ _AGGREGATION_TYPE_MAP = {
 
 
 async def search(query: str, limit: int = 20) -> list[Article]:
-    if not _API_KEY:
+    load_dotenv()
+    api_key = os.getenv("ELSEVIER_API_KEY", "")
+    inst_token = os.getenv("ELSEVIER_INST_TOKEN", "")
+    if not api_key:
         logger.debug("ELSEVIER_API_KEY not set; skipping Elsevier provider.")
         return []
 
     headers = {
-        "X-ELS-APIKey": _API_KEY,
-        "X-ELS-Insttoken": _INST_TOKEN,
+        "X-ELS-APIKey": api_key,
+        "X-ELS-Insttoken": inst_token,
         "Accept": "application/json",
     }
     params = {
@@ -42,11 +42,6 @@ async def search(query: str, limit: int = 20) -> list[Article]:
         # view=COMPLETE is required to include dc:description (the abstract).
         # The default STANDARD view returns metadata only.
         "view": "COMPLETE",
-        "field": (
-            "dc:title,prism:doi,prism:coverDate,dc:description,"
-            "author,prism:publicationName,citedby-count,link,"
-            "prism:aggregationType,openaccess"
-        ),
     }
 
     response = await http_get(BASE_URL, params=params, headers=headers)

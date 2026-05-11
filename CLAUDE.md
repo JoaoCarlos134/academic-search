@@ -5,172 +5,117 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies (editable mode)
+uv pip install -e .
 
 # Run the CLI
-search main "machine learning"
-search main "neural networks" --limit 20 --year-from 2020 --source openalex --oa-only
+uv run search "machine learning"
+uv run search "neural networks" --limit 20
 
-# Run the web UI
-academic-web   # opens http://localhost:8501
-
-# Run tests
-uv run pytest tests/ -v
+# Web interface
+uv run streamlit run src/web.py
 
 # Lint / format
 ruff check src/
 ruff check --fix src/
 ruff format src/
+
+# Smoke-test after changes
+uv run search "machine learning" --limit 5
 ```
 
-Python version is managed via `.python-version` (currently 3.14).
+Python version is managed via `.python-version` (currently 3.14). There are no automated tests yet.
 
 ## Architecture
 
-Two entry points share the same core:
+Academic paper search engine with CLI and web (Streamlit) interfaces.
 
-- **CLI** — `search main <query>` (defined in `pyproject.toml` → `src.cli:app`)
-- **Web UI** — `academic-web` → Streamlit app at `src/web.py`
+**Data flow:** `cli.py` / `web.py` → `providers/*.py` (async fetch in parallel) → `ranking.py` (score) → display / export
 
-**Data flow:** `cli.py` or `web.py` → `cache.py` (hit?) → `providers/*.py` (fetch) → `ranking.py` (score) → display
+**Entry points:**
+- CLI: `search` command (defined in `pyproject.toml` → `src.cli:app`)
+- Web: `uv run streamlit run src/web.py` or `uv run academic-web`
 
-### Core model
+### Core model (`src/models.py`)
 
-`src/models.py` defines `Article`, the single shared dataclass all providers must produce.
-Key fields: `title`, `year`, `doi`, `abstract`, `authors`, `venue`, `source`, `url`,
-`citations`, `score`, `venue_type`, `publisher`, `is_oa`, `oa_url`, `concepts`.
+`Article` is the single shared dataclass all providers must produce. Deduplication uses DOI when available, falling back to title.
 
-Deduplication (`utils.dedup_articles`) keys by normalized DOI first, then title.
-DOI normalization strips `https://doi.org/` and lowercases — needed because OpenAlex returns
-full URLs while Elsevier/IEEE return bare DOIs.
+Fields: `title`, `year`, `doi`, `abstract`, `authors`, `venue`, `source`, `url`, `citations`, `score`, `venue_type`, `publisher`, `is_oa`, `oa_url`, `concepts`.
 
 ### Providers (`src/providers/`)
 
-Each provider is `async def search(query: str, limit: int) -> list[Article]`.
-All three are called concurrently in `_search_all()` in both `cli.py` and `web.py`.
+Each provider is `async def search(query: str, limit: int) -> list[Article]`. All three run in parallel via `asyncio.gather` in `_search_all()`.
 
-- **OpenAlex** (`openalex.py`): free, no key. `OPENALEX_EMAIL` enables polite pool.
-  DOIs come as full `https://doi.org/...` URLs. Abstracts reconstructed from inverted index.
-- **Elsevier** (`elsevier.py`): requires `ELSEVIER_API_KEY` + `ELSEVIER_INST_TOKEN`.
-  Uses `prism:aggregationType` (not `subtypeDescription`) for `venue_type`.
-  Returns bare DOIs; `_normalize_doi` handles the mismatch with OpenAlex at dedup time.
-- **IEEE** (`ieee.py`): requires `IEEE_API_KEY`. Returns empty list when key is absent.
+| Provider | Status | Key required |
+|----------|--------|--------------|
+| `openalex.py` | Functional — all `Article` fields populated | None (polite pool via `mailto`) |
+| `elsevier.py` | Functional — Scopus Search API | `ELSEVIER_API_KEY`, `ELSEVIER_INST_TOKEN` |
+| `ieee.py` | Functional — but `venue_type`, `publisher`, `is_oa`, `oa_url`, `concepts` not yet extracted | `IEEE_API_KEY` |
 
-When adding a new provider: add to `_search_all()` in both `cli.py` and `web.py`,
-register `source` string in `ranking.py`'s `SOURCE_WEIGHTS`, ensure DOIs pass through
-`_normalize_doi` so dedup works cross-provider.
+**OpenAlex note:** set the `EMAIL` constant in `openalex.py` to a real address for better rate limits. Currently uses placeholder.
+
+**Elsevier note:** year filter uses `date.today().year + 2` to allow in-press articles.
+
+When adding a new provider: add it to `_search_all()` in both `cli.py` and `web.py`, and register its `source` string in `ranking.py`'s `SOURCE_WEIGHTS`.
 
 ### Ranking (`src/ranking.py`)
 
-Weighted sum of four components:
+Scores each `Article` as a weighted sum of four components:
 
-| Component  | Base weight | Method |
-|------------|-------------|--------|
-| similarity | 50%         | Cosine (sentence-transformers all-MiniLM-L6-v2) or keyword overlap fallback |
-| recency    | 20%         | Exponential decay `exp(-age / 5)` |
-| source     | 15%         | `SOURCE_WEIGHTS` dict lookup |
-| citations  | 15%         | `log1p`-normalized |
+| Component | Weight | Method |
+|-----------|--------|--------|
+| similarity | 50% | Embedding-based (sentence-transformers `all-MiniLM-L6-v2`) with keyword overlap fallback if model unavailable |
+| recency | 20% | Exponential decay: `exp(-age / 5)` |
+| source | 15% | Lookup in `SOURCE_WEIGHTS` dict |
+| citations | 15% | `log1p`-normalized citation count |
 
-For papers ≤3 years old the recency/citations budget (35%) splits 75/25 in favor of
-recency (young papers haven't accumulated citations yet).
-
-Sentence-transformers loads lazily; on failure logs a warning and falls back to keywords.
-`_embedding_cache` (module-level dict) maps DOI/title → tensor to avoid re-encoding
-articles already seen in the current process lifetime.
+Model is lazy-loaded on first use; if `sentence-transformers` is not installed or fails, falls back silently to keyword overlap.
 
 ### Cache (`src/cache.py`)
 
-SQLite via SQLAlchemy. Two tables:
+SQLite via SQLAlchemy. TTL 24h, keyed by `query` string. Stores all `Article` fields including the extended ones. Has a `_migrate()` function that adds missing columns to existing databases (backward-compatible schema evolution).
 
-- **`article_cache`** — search results keyed by query string, TTL 24h.
-  `cache.get(query, min_size=N)` returns `None` if fewer than N rows exist (forces re-fetch
-  when user requests more results than were originally cached).
-  `_CACHE_FETCH_LIMIT = 50` in `web.py` — always fetches 50 internally so filter changes
-  don't require a new API round-trip.
-- **`hidden_articles`** — per-article hide state, persistent (no TTL).
-  `sweep_hidden(days=90)` removes entries older than N days.
-  `count_hidden()` for quick total.
+### Web interface (`src/web.py`)
 
-All datetimes stored naive UTC — SQLite does not preserve `tzinfo`.
-DB path defaults to `<repo>/academic_cache.db`; override with `CACHE_DB` env var.
+Streamlit single-page app. Key design constraints:
+- All search results are persisted in `st.session_state.results` — never re-fetch on widget events.
+- Selected articles are persisted in `st.session_state.selected` (dict keyed by DOI or position index).
+- Checkboxes use `sel_<key>` prefix in `st.session_state` so they can be cleared atomically.
+- A new search clears all prior selection and checkbox state.
 
-### Web UI (`src/web.py`)
-
-Streamlit app with three tabs:
-
-- **Busca** — filter panel (always visible, pre-search), query input, limit slider, results
-  with "Mostrar mais" pagination (operates within cached pool, no extra API calls),
-  article cards with hide/select/details.
-- **Exportar** — export selected articles as TSV, .xlsx, or BibTeX.
-- **Ocultos** — manage hidden articles; "Limpar antigos (90d)" sweep button;
-  warning shown when total exceeds 100.
-
-Source filter in the filter panel skips excluded providers at fetch time (real pre-fetch).
-Year/type/open-access filters apply post-fetch over the cached pool.
-`display_limit` in `session_state` tracks pagination state; resets on new search.
-
-### CLI (`src/cli.py`)
-
-```
-search main <query> [OPTIONS]
-  --limit / -n       Number of results (default 10)
-  --output / -o      Save to file
-  --format / -f      csv | bibtex
-  --year-from        Min publication year (post-fetch filter)
-  --year-to          Max publication year (post-fetch filter)
-  --source / -s      Filter by provider (repeatable: -s openalex -s ieee)
-  --oa-only          Open access only
-
-search clear-cache   Remove all cached search results
-```
-
-### Tests (`tests/`)
-
-46 tests, all passing. Run with `uv run pytest tests/ -v`.
-
-- `test_utils.py` — `_normalize_doi` (8 cases), `dedup_articles` (7 cases)
-- `test_ranking.py` — keyword similarity, recency, citations normalization, `score_articles` edge cases
-- `test_cache.py` — get/set roundtrip, TTL, `min_size`, hidden article CRUD
+Current features: search form, results cards with `st.expander("Detalhes")`, checkbox selection per card, selection counter, "Limpar selecao" button, export full results as CSV.
 
 ### Environment
 
-All keys loaded from `.env` via `python-dotenv`:
+API keys are loaded from `.env` via `python-dotenv`. Required keys:
+- `ELSEVIER_API_KEY`
+- `ELSEVIER_INST_TOKEN`
+- `IEEE_API_KEY`
 
-| Variable             | Required | Purpose |
-|----------------------|----------|---------|
-| `ELSEVIER_API_KEY`   | for Elsevier | Scopus Search API key |
-| `ELSEVIER_INST_TOKEN`| for Elsevier | Scopus institution token |
-| `IEEE_API_KEY`       | for IEEE | IEEE Xplore API key |
-| `OPENALEX_EMAIL`     | no | Polite pool (better rate limits) |
-| `HTTPX_VERIFY_SSL`   | no | Set `false` for corporate proxies |
-| `CACHE_DB`           | no | Override SQLite path |
+Optional:
+- `HTTPX_VERIFY_SSL=false` — disable SSL verification for corporate proxies with self-signed certs
+- `CACHE_DB` — path for the SQLite cache file (default: `academic_cache.db`)
 
 ## Conventions
 
 - No emojis in f-strings or print statements (Windows encoding issues)
 - Use `uv add <package>` for new dependencies, never `pip install`
-- Commits follow Conventional Commits: `feat:`, `fix:`, `chore:`
+- Commits follow Conventional Commits: `feat:`, `fix:`, `chore:`, `refactor:`
 - All providers must implement: `async def search(query: str, limit: int) -> list[Article]`
-- Use `logger = logging.getLogger(__name__)` for warnings — no bare `print()` in src/
-- Run `uv run pytest tests/ -q` before committing
-- Smoke-test with `search main "machine learning" --limit 5` after provider changes
+- All `Article` fields must be populated by every provider — use `None` for unavailable fields, never omit
+- When adding a field to `Article`, update all providers and the cache schema simultaneously
+- In `web.py`, always persist results to `st.session_state` before any widget interaction
+- Run `uv run search "machine learning" --limit 5` to smoke-test after changes
 
-## Workflow obrigatorio antes de qualquer alteracao
+## Next steps (priority order)
 
-1. **Ler o codigo relevante primeiro** — antes da primeira edicao em qualquer sessao,
-   leia os arquivos que serao tocados. Nunca edite sem ter lido o estado atual.
+1. **Export selecionados na web** — nova secao em `web.py` que aparece quando `st.session_state.selected` nao esta vazio; gera tres formatos em `st.code` com botao de copia nativo:
+   - TSV (cola direto no Excel/LibreOffice respeitando colunas)
+   - BibTeX (para Mendeley/Zotero/LaTeX; reusar `_write_bibtex` de `cli.py`)
+   - ABNT (citacao formatada em string: `SOBRENOME, Nome. Titulo. Venue, ano.`)
 
-2. **Atualizar ROADMAP.txt** sempre que:
-   - Um bug for encontrado → adicionar em `ALTA PRIORIDADE` ou `MEDIA PRIORIDADE`
-     com `[ ]` e descricao clara do problema e impacto.
-   - Uma etapa nova for identificada → adicionar na secao de prioridade correta.
-   - Um item for concluido → marcar `[x]` e mover para a secao `CONCLUIDO`
-     com a data no formato `AAAA-MM-DD`.
-   - O trabalho estiver em andamento → marcar `[-]`.
+2. **Completar `ieee.py`** — extrair `venue_type`, `publisher`, `is_oa`, `oa_url`, `concepts` da resposta da IEEE Xplore API para manter schema consistente com OpenAlex e Elsevier
 
-   Formato de entrada no ROADMAP.txt:
-   ```
-   [ ] Titulo curto
-       Descricao do problema ou etapa. Impacto esperado.
-   ```
+3. **EMAIL em `openalex.py`** — substituir placeholder `"seu@email.com"` pelo email real do usuario (joaojachenskijunior@gmail.com)
+
+4. **Resumo em PT via LLM (opcional)** — botao "Gerar resumo" por artigo em `web.py`; comprime o abstract em 2-3 frases em portugues usando a API do Claude (`claude-haiku-4-5-20251001` por custo); resultado cacheado no SQLite para nao regerar; adicionar campo `summary_pt: str | None = None` no `Article` e na tabela de cache
