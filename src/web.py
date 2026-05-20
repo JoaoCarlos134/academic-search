@@ -73,11 +73,6 @@ async def _search_all(
     return dedup_articles(articles), failed, errors
 
 
-# Sempre busca esse total internamente para ter margem de filtragem pós-fetch.
-# O cache guarda todos; a UI fatia para o limit pedido pelo usuário.
-_CACHE_FETCH_LIMIT = 50
-
-
 def _fetch(
     query: str,
     limit: int,
@@ -85,17 +80,17 @@ def _fetch(
 ) -> tuple[list[Article], bool, list[str], dict[str, str]]:
     """Returns (articles, from_cache, failed_providers, provider_errors).
 
-    Articles are unfiltered (year/type/oa filters applied in the UI).
-    The cache always stores up to _CACHE_FETCH_LIMIT results so changing
-    filters doesn't require a new API round-trip.
+    Fetches max(limit*4, 200) candidates so the hidden/filter pipeline can
+    still deliver `limit` visible results after post-fetch filtering.
+    The UI slices down to the real limit after filtering.
     """
-    cached = cache.get(query, min_size=min(limit, _CACHE_FETCH_LIMIT))
+    fetch_limit = max(limit * 4, 200)
+    cached = cache.get(query, min_size=fetch_limit)
     if cached is not None:
-        # Re-mark retractions in case the dataset was updated since the cache.
         retractions.mark_retracted(cached)
         return cached, True, [], {}
     articles, failed, errors = asyncio.run(
-        _search_all(query, _CACHE_FETCH_LIMIT, sources=sources)
+        _search_all(query, fetch_limit, sources=sources)
     )
     ranked = score_articles(articles, query)
     retractions.mark_retracted(ranked)
@@ -323,6 +318,8 @@ def _app() -> None:
         st.session_state.search_error = None
     if "display_limit" not in st.session_state:
         st.session_state.display_limit = 10
+    if "pool_total" not in st.session_state:
+        st.session_state.pool_total = 0
 
     tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
 
@@ -435,6 +432,7 @@ def _app() -> None:
                         hidden = get_hidden_dois()
                         visible = [a for a in results if _hide_key(a) not in hidden]
                         st.session_state.results = visible
+                        st.session_state.pool_total = len(results)
                         st.session_state.hidden_count = len(results) - len(visible)
                         st.session_state.from_cache = from_cache
                         st.session_state.failed_providers = failed
@@ -491,9 +489,9 @@ def _app() -> None:
                     header_col, export_col = st.columns([4, 1])
                     with header_col:
                         origin = "cache" if st.session_state.get("from_cache") else "API"
-                        pool = len(results)
-                        if len(filtered) < pool:
-                            total_label = f"{len(sliced)} de {len(filtered)} (filtrado de {pool})"
+                        pool_total = st.session_state.get("pool_total", len(results))
+                        if pool_total > len(sliced):
+                            total_label = f"{len(sliced)} de {len(filtered)} (filtrado de {pool_total})"
                         else:
                             total_label = str(len(sliced))
                         st.caption(f"{total_label} artigos encontrados  ({origin})")
