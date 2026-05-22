@@ -36,7 +36,7 @@ cp .env.example .env
 |----------------------|--------------|------------|
 | `OPENALEX_EMAIL`     | nao          | Qualquer email — coloca voce na "polite pool" do OpenAlex (rate limit melhor) |
 | `ELSEVIER_API_KEY`   | so para Scopus | https://dev.elsevier.com/ (precisa filiacao academica) |
-| `ELSEVIER_INST_TOKEN`| so para Scopus | Sua instituicao fornece |
+| `ELSEVIER_INST_TOKEN`| so para Scopus | A Elsevier fornece para ativar a api |
 | `IEEE_API_KEY`       | so para IEEE   | https://developer.ieee.org/ (gratis) |
 | `HTTPX_VERIFY_SSL`   | nao          | Defina `false` se estiver atras de proxy corporativo |
 | `CACHE_DB`           | nao          | Caminho alternativo do SQLite (default `<repo>/academic_cache.db`) |

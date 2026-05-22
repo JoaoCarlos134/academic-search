@@ -30,6 +30,7 @@ select = ["E", "F", "I"]
 [dependency-groups]
 dev = [
     "hatchling>=1.29.0",
+    "pytest>=9.0.3",
 ]
 
 [build-system]

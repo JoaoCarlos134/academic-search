@@ -116,6 +116,6 @@ Optional:
 
 2. **Completar `ieee.py`** — extrair `venue_type`, `publisher`, `is_oa`, `oa_url`, `concepts` da resposta da IEEE Xplore API para manter schema consistente com OpenAlex e Elsevier
 
-3. **EMAIL em `openalex.py`** — substituir placeholder `"seu@email.com"` pelo email real do usuario (joaojachenskijunior@gmail.com)
+3. **EMAIL em `openalex.py`** — definir a variavel de ambiente `OPENALEX_EMAIL` com o email do usuario para acesso ao polite pool do OpenAlex
 
 4. **Resumo em PT via LLM (opcional)** — botao "Gerar resumo" por artigo em `web.py`; comprime o abstract em 2-3 frases em portugues usando a API do Claude (`claude-haiku-4-5-20251001` por custo); resultado cacheado no SQLite para nao regerar; adicionar campo `summary_pt: str | None = None` no `Article` e na tabela de cache
