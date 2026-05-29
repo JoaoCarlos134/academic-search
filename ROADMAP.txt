@@ -1,8 +1,51 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-09 (mediums P1/P5/P6 concluidos)
+Atualizado: 2026-05-29 (provider Semantic Scholar + rework do limite)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
+
+========================================
+SESSAO 2026-05-29 — CONCLUIDO
+========================================
+
+[x] Provider Semantic Scholar (4a fonte)
+    Novo src/providers/semanticscholar.py via Graph API (paper/search,
+    fields=title,year,abstract,authors,venue,externalIds,citationCount,
+    openAccessPdf,publicationTypes,journal). Chave opcional
+    SEMANTIC_SCHOLAR_API_KEY (header x-api-key); sem chave usa tier anonimo.
+    Resiliencia: ssl via utils.http_get, sleep 0.2s antes da request e
+    soft-fail (retorna []) em HTTP 429. venue_type normalizado a partir de
+    publicationTypes; publisher/concepts ficam None por ora.
+    Integrado em cli.py e web.py (_search_all + _PROVIDER_NAMES + _ALL_SOURCES)
+    e em ranking.SOURCE_WEIGHTS ("semanticscholar": 0.85). .env.example atualizado.
+
+[x] Rework do limite — cap no total, nao por-provedor
+    Sintoma: buscar 10 retornava 200. Causa: web._fetch buscava max(limit*4,200)
+    por provedor e o rotulo "N de M" exibia o pool inteiro. Fix: ambos os
+    orquestradores buscam min(limit*3,100) candidatos por provedor; pipeline
+    fetch -> dedup -> rank -> filtros -> truncar em limit. CLI alinhado ao web.
+
+[x] Remocao da paginacao "carregar mais"
+    SUPERSEDE o item [x] "Paginacao / carregar mais" de 2026-05-09.
+    display_limit, "Mostrar mais" e "Recolher" removidos. O slider de limite
+    agora e o teto direto da lista exibida (re-fatia o pool ja buscado ao
+    arrastar, sem nova chamada a API).
+
+[x] Rotulo de contagem corrigido + falhas de provedor sempre visiveis
+    Antes mostrava "10 de 200" (enganoso). Agora: "N artigo(s) encontrados,
+    R candidato(s) avaliado(s), D duplicata(s) removida(s)" em busca fresca;
+    so "N artigo(s) encontrados (cache)" em cache hit. Aviso de provedores
+    indisponiveis saiu do else de "if not sliced" — uma queda total nao se
+    disfarca mais de "nenhum resultado para os filtros".
+
+[x] Fix StreamlitAPIException no botao de busca recente
+    Atribuir st.session_state.query_input apos instanciar o widget quebrava.
+    Agora usa callback on_click (_set_query_from_recent) + key pre-inicializada.
+
+[x] Docs: ROADMAP.txt agora e a fonte unica do roadmap
+    CLAUDE.md aponta para este arquivo no topo ("ler antes de qualquer task")
+    e nao duplica mais o roadmap. CLAUDE.md tambem corrigido: comando CLI usa
+    subcomando `main`, e a suite de testes (pytest) passou a ser documentada.
 
 ========================================
 ALTA PRIORIDADE — CONCLUIDO EM 2026-05-09
@@ -38,6 +81,8 @@ MEDIA PRIORIDADE — CONCLUIDO EM 2026-05-09
     Botao "Recolher" volta ao tamanho inicial.
     Decisao: paginacao com novas chamadas a API foi descartada por risco
     de quota nas APIs institucionais (Elsevier/IEEE).
+    NOTA (2026-05-29): REMOVIDA — substituida pelo slider de limite que fatia
+    o pool diretamente. Ver secao SESSAO 2026-05-29.
 
 [x] Cache de embeddings em memoria (2026-05-09)
     Dict em processo (_embedding_cache em ranking.py) mapeia DOI/titulo
@@ -88,6 +133,8 @@ ESTADO ATUAL
 Concluidos:
     - Quick wins (P8, P2, P4, P3) em 2026-05-09
     - Mediums (P1, P5, P6) em 2026-05-09
+    - Sessao 2026-05-29: provider Semantic Scholar, rework do limite, remocao
+      da paginacao, rotulo de contagem, falhas de provedor sempre visiveis
 
 Pendentes:
     - P7 — IEEE API key (externo, nao-codigo)
@@ -96,6 +143,9 @@ Pos-mediums vale considerar (nao prioridade):
     - UI: filtro "Excluir retratados" no expander de filtros
     - CLI: flag --no-retracted equivalente
     - Telemetria: adicionar metric/log para hits de embedding cache (sqlite vs encode)
+    - semanticscholar.py: popular publisher e concepts (hoje None)
+    - Export ABNT na aba Exportar (ao lado de TSV/xlsx/BibTeX)
+    - CLI sem subcomando: permitir `search "termo"` sem `main` (typer callback)
 
 ========================================
 DESCARTADAS

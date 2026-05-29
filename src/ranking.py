@@ -13,6 +13,7 @@ SOURCE_WEIGHTS = {
     "elsevier": 1.0,
     "ieee": 1.0,
     "openalex": 0.9,
+    "semanticscholar": 0.85,
     "mdpi": 0.8,
 }
 

@@ -36,6 +36,7 @@ from src.models import Article
 from src.providers.elsevier import search as elsevier_search
 from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
+from src.providers.semanticscholar import search as semanticscholar_search
 from src.ranking import score_articles
 from src.utils import dedup_articles
 from src import retractions
@@ -43,16 +44,16 @@ from src.clustering import cluster_articles
 
 # ── async orchestrator (same logic as cli.py) ─────────────────────────────────
 
-_PROVIDER_NAMES = ("openalex", "elsevier", "ieee")
+_PROVIDER_NAMES = ("openalex", "elsevier", "ieee", "semanticscholar")
 
 
 async def _search_all(
     query: str,
     limit: int,
     sources: set[str] | None = None,
-) -> tuple[list[Article], list[str], dict[str, str]]:
-    """Return (deduplicated articles, failed provider names, errors dict)."""
-    _fns = [openalex_search, elsevier_search, ieee_search]
+) -> tuple[list[Article], list[str], dict[str, str], int]:
+    """Return (deduplicated articles, failed provider names, errors dict, total_raw_count)."""
+    _fns = [openalex_search, elsevier_search, ieee_search, semanticscholar_search]
     tasks, names = [], []
     for name, fn in zip(_PROVIDER_NAMES, _fns):
         if sources is None or name in sources:
@@ -70,32 +71,33 @@ async def _search_all(
             logger.warning("[%s] provider failed: %s", name, result)
             continue
         articles.extend(result)
-    return dedup_articles(articles), failed, errors
+    total_raw = len(articles)
+    return dedup_articles(articles), failed, errors, total_raw
 
 
 def _fetch(
     query: str,
     limit: int,
     sources: set[str] | None = None,
-) -> tuple[list[Article], bool, list[str], dict[str, str]]:
-    """Returns (articles, from_cache, failed_providers, provider_errors).
+) -> tuple[list[Article], bool, list[str], dict[str, str], int, int]:
+    """Returns (articles, from_cache, failed_providers, provider_errors, total_raw, total_dedup).
 
-    Fetches max(limit*4, 200) candidates so the hidden/filter pipeline can
-    still deliver `limit` visible results after post-fetch filtering.
-    The UI slices down to the real limit after filtering.
+    Fetches min(limit * 3, 100) candidates per provider so the filter pipeline
+    can still deliver `limit` visible results after post-fetch filtering.
+    The UI truncates to the real limit after applying filters.
     """
-    fetch_limit = max(limit * 4, 200)
+    fetch_limit = min(limit * 3, 100)
     cached = cache.get(query, min_size=fetch_limit)
     if cached is not None:
         retractions.mark_retracted(cached)
-        return cached, True, [], {}
-    articles, failed, errors = asyncio.run(
+        return cached, True, [], {}, 0, len(cached)
+    articles, failed, errors, total_raw = asyncio.run(
         _search_all(query, fetch_limit, sources=sources)
     )
     ranked = score_articles(articles, query)
     retractions.mark_retracted(ranked)
     cache.store(query, ranked)
-    return ranked, False, failed, errors
+    return ranked, False, failed, errors, total_raw, len(ranked)
 
 
 # ── shared field helpers ───────────────────────────────────────────────────────
@@ -308,6 +310,8 @@ def _app() -> None:
     _retractions_sidebar()
 
     # Initialize persistent state (outside tabs, always runs)
+    if "query_input" not in st.session_state:
+        st.session_state.query_input = ""
     if "results" not in st.session_state:
         st.session_state.results = []
     if "selected" not in st.session_state:
@@ -316,15 +320,15 @@ def _app() -> None:
         st.session_state.search_done = False
     if "search_error" not in st.session_state:
         st.session_state.search_error = None
-    if "display_limit" not in st.session_state:
-        st.session_state.display_limit = 10
-    if "pool_total" not in st.session_state:
-        st.session_state.pool_total = 0
+    if "total_raw" not in st.session_state:
+        st.session_state.total_raw = 0
+    if "total_dedup" not in st.session_state:
+        st.session_state.total_dedup = 0
 
     tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
 
     # ── constantes de filtro ──────────────────────────────────────────────────
-    _ALL_SOURCES = ["openalex", "elsevier", "ieee"]
+    _ALL_SOURCES = ["openalex", "elsevier", "ieee", "semanticscholar"]
     _ALL_TYPES = ["journal", "conference", "repository", "book", "other"]
     _TYPE_LABELS = {
         "journal": "Journal",
@@ -379,6 +383,9 @@ def _app() -> None:
             set(f_types) != set(_ALL_TYPES),
         ])
 
+        def _set_query_from_recent(value: str) -> None:
+            st.session_state.query_input = value
+
         query = st.text_input(
             "Termo de busca",
             placeholder="ex: machine learning transformers",
@@ -392,10 +399,13 @@ def _app() -> None:
             cols = st.columns(min(len(recent), 4))
             for i, rq in enumerate(recent):
                 with cols[i % len(cols)]:
-                    if st.button(rq[:30] + ("..." if len(rq) > 30 else ""),
-                                 key=f"recent_{i}", use_container_width=True):
-                        st.session_state.query_input = rq
-                        st.rerun()
+                    st.button(
+                        rq[:30] + ("..." if len(rq) > 30 else ""),
+                        key=f"recent_{i}",
+                        use_container_width=True,
+                        on_click=_set_query_from_recent,
+                        args=(rq,),
+                    )
 
         col_lim, col_btn, col_refresh = st.columns([3, 1, 1])
         with col_lim:
@@ -426,13 +436,14 @@ def _app() -> None:
                 with st.spinner("Buscando..."):
                     try:
                         active_sources = set(f_sources) if f_sources else set(_ALL_SOURCES)
-                        results, from_cache, failed, errors = _fetch(
+                        results, from_cache, failed, errors, total_raw, total_dedup = _fetch(
                             query.strip(), limit, sources=active_sources
                         )
                         hidden = get_hidden_dois()
                         visible = [a for a in results if _hide_key(a) not in hidden]
                         st.session_state.results = visible
-                        st.session_state.pool_total = len(results)
+                        st.session_state.total_raw = total_raw
+                        st.session_state.total_dedup = total_dedup
                         st.session_state.hidden_count = len(results) - len(visible)
                         st.session_state.from_cache = from_cache
                         st.session_state.failed_providers = failed
@@ -446,7 +457,6 @@ def _app() -> None:
                         st.session_state.search_error = str(exc)
                     finally:
                         st.session_state.search_done = True
-                        st.session_state.display_limit = limit
                         st.session_state.selected = {}
                         for k in list(st.session_state.keys()):
                             if k.startswith("sel_"):
@@ -479,8 +489,18 @@ def _app() -> None:
                     return out
 
                 filtered = _apply_filters(results)
-                display_limit = st.session_state.display_limit
-                sliced = filtered[:display_limit]
+                sliced = filtered[:limit]
+
+                # Falhas de provedor aparecem independentemente de haver resultados,
+                # para que uma queda total nao se disfarce de "nenhum resultado".
+                failed = st.session_state.get("failed_providers") or []
+                if failed:
+                    errors = st.session_state.get("provider_errors") or {}
+                    lines = [f"**{p}**: {errors.get(p, 'erro desconhecido')}" for p in failed]
+                    st.warning(
+                        "Provedores indisponiveis nesta busca (resultados parciais):\n\n"
+                        + "\n\n".join(lines)
+                    )
 
                 if not sliced:
                     st.warning("Nenhum resultado encontrado com os filtros atuais.")
@@ -489,26 +509,20 @@ def _app() -> None:
                     header_col, export_col = st.columns([4, 1])
                     with header_col:
                         origin = "cache" if st.session_state.get("from_cache") else "API"
-                        pool_total = st.session_state.get("pool_total", len(results))
-                        if pool_total > len(sliced):
-                            total_label = f"{len(sliced)} de {len(filtered)} (filtrado de {pool_total})"
+                        total_raw = st.session_state.get("total_raw", 0)
+                        total_dedup = st.session_state.get("total_dedup", len(results))
+                        n = len(sliced)
+                        # Limite e o teto exibido. O detalhe (candidatos avaliados e
+                        # duplicatas removidas) so aparece em busca fresca, nao no cache.
+                        if total_raw and not st.session_state.get("from_cache"):
+                            dupes = max(total_raw - total_dedup, 0)
+                            extra = f", {dupes} duplicata(s) removida(s)" if dupes else ""
+                            st.caption(f"{n} artigo(s) encontrados, {total_raw} candidato(s) avaliado(s){extra}  ({origin})")
                         else:
-                            total_label = str(len(sliced))
-                        st.caption(f"{total_label} artigos encontrados  ({origin})")
+                            st.caption(f"{n} artigo(s) encontrados  ({origin})")
                         hidden_count = st.session_state.get("hidden_count", 0)
                         if hidden_count:
                             st.caption(f"{hidden_count} artigo(s) oculto(s) nesta busca")
-                        failed = st.session_state.get("failed_providers") or []
-                        if failed:
-                            errors = st.session_state.get("provider_errors") or {}
-                            lines = []
-                            for p in failed:
-                                msg = errors.get(p, "erro desconhecido")
-                                lines.append(f"**{p}**: {msg}")
-                            st.warning(
-                                "Provedores indisponiveis nesta busca (resultados parciais):\n\n"
-                                + "\n\n".join(lines)
-                            )
                     with export_col:
                         st.download_button(
                             label="Exportar CSV",
@@ -599,27 +613,6 @@ def _app() -> None:
                                         st.caption(a.abstract)
                                     else:
                                         st.caption("Abstract nao disponivel")
-
-                    # ── paginacao dentro do pool cacheado ─────────────────────────────
-                    has_more = len(filtered) > display_limit
-                    if has_more or display_limit > limit:
-                        pg_col, reset_col = st.columns([3, 1])
-                        with pg_col:
-                            if has_more:
-                                remaining = len(filtered) - display_limit
-                                if st.button(
-                                    f"Mostrar mais ({min(10, remaining)} de {remaining} restantes)",
-                                    key="btn_show_more",
-                                ):
-                                    st.session_state.display_limit += 10
-                                    st.rerun()
-                            else:
-                                st.caption("Todos os resultados do pool estao exibidos.")
-                        with reset_col:
-                            if display_limit > limit:
-                                if st.button("Recolher", key="btn_collapse", use_container_width=True):
-                                    st.session_state.display_limit = limit
-                                    st.rerun()
 
                     if st.session_state.selected:
                         st.divider()

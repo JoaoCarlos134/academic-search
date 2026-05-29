@@ -14,6 +14,7 @@ from src.models import Article
 from src.providers.elsevier import search as elsevier_search
 from src.providers.ieee import search as ieee_search
 from src.providers.openalex import search as openalex_search
+from src.providers.semanticscholar import search as semanticscholar_search
 from src.ranking import score_articles
 from src.utils import dedup_articles
 from src import retractions
@@ -35,7 +36,7 @@ def main(
     fmt: Format = typer.Option(Format.csv, "--format", "-f", help="Formato de saida: csv, bibtex"),
     year_from: Optional[int] = typer.Option(None, "--year-from", help="Ano minimo de publicacao"),
     year_to: Optional[int] = typer.Option(None, "--year-to", help="Ano maximo de publicacao"),
-    source: Optional[list[str]] = typer.Option(None, "--source", "-s", help="Filtrar por fonte: openalex, elsevier, ieee (repetivel)"),
+    source: Optional[list[str]] = typer.Option(None, "--source", "-s", help="Filtrar por fonte: openalex, elsevier, ieee, semanticscholar (repetivel)"),
     oa_only: bool = typer.Option(False, "--oa-only", help="Somente artigos Open Access"),
 ):
     """Search academic papers across multiple sources."""
@@ -48,7 +49,10 @@ def main(
         console.print("[dim]cache hit[/dim]")
         ranked = cached
     else:
-        articles = asyncio.run(_search_all(query, limit, sources=active_sources))
+        # Fetch more candidates than needed so ranking has room to work,
+        # then truncate to `limit` after filters (parity with web.py).
+        fetch_limit = min(limit * 3, 100)
+        articles = asyncio.run(_search_all(query, fetch_limit, sources=active_sources))
         ranked = score_articles(articles, query)
         cache.store(query, ranked)
 
@@ -92,7 +96,7 @@ def _apply_filters(
     return out
 
 
-_PROVIDER_NAMES = ("openalex", "elsevier", "ieee")
+_PROVIDER_NAMES = ("openalex", "elsevier", "ieee", "semanticscholar")
 
 
 async def _search_all(
@@ -102,7 +106,7 @@ async def _search_all(
 ) -> list[Article]:
     """Call enabled providers concurrently. If `sources` is given, only those
     providers are queried (pre-fetch filter — saves API quota)."""
-    fns = [openalex_search, elsevier_search, ieee_search]
+    fns = [openalex_search, elsevier_search, ieee_search, semanticscholar_search]
     tasks, names = [], []
     for name, fn in zip(_PROVIDER_NAMES, fns):
         if sources is None or name in sources:
