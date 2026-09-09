@@ -10,9 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
-
-from src.utils import _normalize_doi
+from src.utils import _normalize_doi, http_get_sync
 
 if TYPE_CHECKING:
     from src.models import Article
@@ -47,9 +45,8 @@ def cache_age_days() -> float | None:
 def download() -> int:
     """Download the CSV synchronously. ~64 MB / 30-60s typical. Returns bytes."""
     logger.info("Downloading Retraction Watch CSV from %s ...", CSV_URL)
-    with httpx.Client(timeout=120, follow_redirects=True) as client:
-        r = client.get(CSV_URL)
-        r.raise_for_status()
+    r = http_get_sync(CSV_URL, timeout=120)
+    r.raise_for_status()
     CACHE_FILE.write_bytes(r.content)
     global _dois_set
     _dois_set = None
