@@ -42,7 +42,7 @@ class TestClusterArticles:
         arts = [_art("Title 1"), _art("Title 2")]
         out = cluster_articles(arts)
         assert len(out) == 1
-        assert out[0]["label"] == "Resultados"
+        assert out[0]["label"] == "Results"
         assert out[0]["articles"] == arts
 
     def test_no_embeddings_returns_single_cluster(self):
@@ -50,7 +50,7 @@ class TestClusterArticles:
         arts = [_art(f"Title {i}", doi=f"10.1/{i}") for i in range(10)]
         out = cluster_articles(arts)
         assert len(out) == 1
-        assert out[0]["label"] == "Resultados"
+        assert out[0]["label"] == "Results"
 
     def test_clusters_when_embeddings_present(self):
         # Inject fake embeddings: two distinct topics

@@ -30,17 +30,17 @@ class Format(str, Enum):
 
 @app.command()
 def main(
-    query: str = typer.Argument(..., help="Termo de busca"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Numero de resultados"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Arquivo de saida"),
-    fmt: Format = typer.Option(Format.csv, "--format", "-f", help="Formato de saida: csv, bibtex"),
-    year_from: Optional[int] = typer.Option(None, "--year-from", help="Ano minimo de publicacao"),
-    year_to: Optional[int] = typer.Option(None, "--year-to", help="Ano maximo de publicacao"),
-    source: Optional[list[str]] = typer.Option(None, "--source", "-s", help="Filtrar por fonte: openalex, elsevier, ieee, semanticscholar (repetivel)"),
-    oa_only: bool = typer.Option(False, "--oa-only", help="Somente artigos Open Access"),
+    query: str = typer.Argument(..., help="Search term"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
+    fmt: Format = typer.Option(Format.csv, "--format", "-f", help="Output format: csv, bibtex"),
+    year_from: Optional[int] = typer.Option(None, "--year-from", help="Earliest publication year"),
+    year_to: Optional[int] = typer.Option(None, "--year-to", help="Latest publication year"),
+    source: Optional[list[str]] = typer.Option(None, "--source", "-s", help="Filter by source: openalex, elsevier, ieee, semanticscholar (repeatable)"),
+    oa_only: bool = typer.Option(False, "--oa-only", help="Open Access articles only"),
 ):
     """Search academic papers across multiple sources."""
-    console.print(f"\nBuscando: [bold cyan]{query}[/bold cyan]\n")
+    console.print(f"\nSearching: [bold cyan]{query}[/bold cyan]\n")
 
     active_sources = set(source) if source else None
 
@@ -58,7 +58,7 @@ def main(
 
     n_retracted = retractions.mark_retracted(ranked)
     if n_retracted:
-        console.print(f"[red]Atencao: {n_retracted} artigo(s) retratado(s) marcado(s).[/red]")
+        console.print(f"[red]Warning: {n_retracted} retracted article(s) flagged.[/red]")
 
     # Source filter applied post-fetch as well, so cached entries from a
     # different source set are filtered correctly on subsequent calls.
@@ -70,7 +70,7 @@ def main(
             _write_bibtex(results, output)
         else:
             _write_csv(results, output)
-        console.print(f"[green]Salvo em {output}[/green]")
+        console.print(f"[green]Saved to {output}[/green]")
     else:
         _display_results(results)
 
@@ -117,7 +117,7 @@ async def _search_all(
     articles: list[Article] = []
     for name, result in zip(names, raw):
         if isinstance(result, BaseException):
-            console.print(f"[yellow]Aviso: provedor {name} falhou ({result}). Continuando sem ele.[/yellow]")
+            console.print(f"[yellow]Warning: provider {name} failed ({result}). Continuing without it.[/yellow]")
             continue
         articles.extend(result)
     return dedup_articles(articles)
@@ -125,22 +125,22 @@ async def _search_all(
 
 def _display_results(articles: list[Article]):
     if not articles:
-        console.print("[red]Nenhum resultado encontrado.[/red]")
+        console.print("[red]No results found.[/red]")
         return
 
     table = Table(show_header=True, header_style="bold magenta", show_lines=True)
     table.add_column("#", width=3)
-    table.add_column("Titulo", min_width=40, max_width=60)
-    table.add_column("Ano", width=6)
-    table.add_column("Fonte", width=10)
-    table.add_column("Citacoes", width=9)
+    table.add_column("Title", min_width=40, max_width=60)
+    table.add_column("Year", width=6)
+    table.add_column("Source", width=10)
+    table.add_column("Cited by", width=9)
     table.add_column("Score", width=7)
     table.add_column("DOI", min_width=20, max_width=35)
 
     for i, a in enumerate(articles, 1):
         title = a.title[:80] if a.title else "-"
         if a.retracted:
-            title = f"[red][RETRATADO][/red] {title}"
+            title = f"[red][RETRACTED][/red] {title}"
         table.add_row(
             str(i),
             title,
@@ -152,7 +152,7 @@ def _display_results(articles: list[Article]):
         )
 
     console.print(table)
-    console.print(f"\n[green]{len(articles)} artigos encontrados.[/green]\n")
+    console.print(f"\n[green]{len(articles)} article(s) found.[/green]\n")
 
 
 def _write_csv(articles: list[Article], path: Path):
@@ -204,19 +204,19 @@ def _bibtex_key(article: Article) -> str:
 def clear_cache():
     """Remove all entries from the local search cache."""
     removed = cache.clear()
-    console.print(f"[green]Cache limpo: {removed} entrada(s) removida(s).[/green]")
+    console.print(f"[green]Cache cleared: {removed} entry/entries removed.[/green]")
 
 
 @app.command("refresh-retractions")
 def refresh_retractions():
     """Download or refresh the Retraction Watch dataset (~64 MB)."""
-    console.print("Baixando lista de retratacoes (pode demorar ate 1 min)...")
+    console.print("Downloading retraction list (may take up to 1 min)...")
     try:
         size = retractions.download()
         n = len(retractions.get_retracted_dois())
         console.print(f"[green]OK. {n:,} DOIs ({size // 1024 // 1024} MB).[/green]")
     except Exception as exc:
-        console.print(f"[red]Falha: {exc}[/red]")
+        console.print(f"[red]Failed: {exc}[/red]")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from src.ranking import _article_cache_key, _embedding_cache
 logger = logging.getLogger(__name__)
 
 
-# Stop words minimas para inferencia de label (titulos academicos em ingles).
+# Minimal stop-word list for label inference (English academic titles).
 _STOP = {
     "the", "a", "an", "of", "in", "for", "to", "and", "or", "with", "on",
     "from", "by", "as", "is", "are", "was", "were", "be", "been", "being",
@@ -35,13 +35,13 @@ def cluster_articles(
     """Group articles into topical clusters.
 
     Returns a list of dicts: [{"label": str, "articles": [...]}], sorted by
-    cluster size desc. Falls back to a single "Resultados" cluster when:
+    cluster size desc. Falls back to a single "Results" cluster when:
     - sklearn is unavailable
     - too few articles to cluster (< 2 * min_articles_per_cluster)
     - no embeddings available (sentence-transformers fallback to keywords)
     """
     if len(articles) < max(3, 2 * min_articles_per_cluster):
-        return [{"label": "Resultados", "articles": list(articles)}]
+        return [{"label": "Results", "articles": list(articles)}]
 
     try:
         import numpy as np
@@ -49,7 +49,7 @@ def cluster_articles(
         from sklearn.metrics import silhouette_score
     except ImportError as exc:
         logger.warning("sklearn unavailable, skipping clustering: %s", exc)
-        return [{"label": "Resultados", "articles": list(articles)}]
+        return [{"label": "Results", "articles": list(articles)}]
 
     # Collect embeddings for articles that have one in the cache
     indexed = []
@@ -60,14 +60,14 @@ def cluster_articles(
             indexed.append((i, emb))
 
     if len(indexed) < max(3, 2 * min_articles_per_cluster):
-        return [{"label": "Resultados", "articles": list(articles)}]
+        return [{"label": "Results", "articles": list(articles)}]
 
     X = np.array([emb.detach().cpu().numpy() if hasattr(emb, "detach") else np.asarray(emb)
                   for _, emb in indexed])
     n = len(indexed)
     upper_k = min(max_k, n // min_articles_per_cluster)
     if upper_k < 2:
-        return [{"label": "Resultados", "articles": list(articles)}]
+        return [{"label": "Results", "articles": list(articles)}]
 
     best_k, best_score, best_labels = 2, -1.0, None
     for k in range(2, upper_k + 1):
@@ -79,7 +79,7 @@ def cluster_articles(
             best_k, best_score, best_labels = k, score, km.labels_
 
     if best_labels is None:
-        return [{"label": "Resultados", "articles": list(articles)}]
+        return [{"label": "Results", "articles": list(articles)}]
 
     # Group articles by cluster id (using the indexed positions)
     groups: dict[int, list[Article]] = {}

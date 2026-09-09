@@ -31,7 +31,7 @@ class Article:
     is_oa: bool | None = None
     oa_url: str | None = None
     concepts: list[str] | None = None
-    retracted: bool | None = None       # None = nao verificado; True = retratado (Retraction Watch)
+    retracted: bool | None = None       # None = not checked; True = retracted (Retraction Watch)
 
     def __hash__(self):
         return hash(_norm_doi(self.doi) or (self.title or ""))

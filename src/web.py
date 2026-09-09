@@ -103,7 +103,7 @@ def _fetch(
 # ── shared field helpers ───────────────────────────────────────────────────────
 
 def _article_link(article: Article) -> str:
-    """URL canonica: DOI → oa_url → vazio."""
+    """Canonical URL: DOI -> oa_url -> empty."""
     if article.doi:
         doi = article.doi
         return doi if doi.startswith("http") else f"https://doi.org/{doi}"
@@ -111,7 +111,7 @@ def _article_link(article: Article) -> str:
 
 
 def _author_str(article: Article) -> str:
-    """Primeiro autor; 'et al.' se houver mais de um."""
+    """First author; 'et al.' when there is more than one."""
     if not article.authors:
         return ""
     if len(article.authors) == 1:
@@ -120,7 +120,7 @@ def _author_str(article: Article) -> str:
 
 
 def _content_str(article: Article) -> str:
-    """Abstract truncado em 300 caracteres."""
+    """Abstract truncated to 300 characters."""
     if not article.abstract:
         return ""
     if len(article.abstract) <= 300:
@@ -165,9 +165,9 @@ def _bib_escape(s: str) -> str:
     return s.replace("&", r"\&").replace("%", r"\%")
 
 
-# ── export: aba Exportar (formato planilha) ────────────────────────────────────
+# ── export: Export tab (spreadsheet format) ────────────────────────────────────
 
-_REF_HEADERS = ["Revista", "Autor", "Ano", "Conteudo", "Titulo", "Link"]
+_REF_HEADERS = ["Journal", "Author", "Year", "Content", "Title", "Link"]
 
 
 def _ref_row(article: Article) -> list:
@@ -189,7 +189,7 @@ def _to_ref_tsv(articles: list[Article]) -> str:
 def _to_ref_xlsx(articles: list[Article]) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Referencias"
+    ws.title = "References"
 
     bold = Font(bold=True)
     gray = PatternFill(fill_type="solid", fgColor="D9D9D9")
@@ -203,7 +203,7 @@ def _to_ref_xlsx(articles: list[Article]) -> bytes:
     for row_idx, a in enumerate(articles, 2):
         for col_idx, value in enumerate(_ref_row(a), 1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
-            if col_idx in (4, 5):  # Conteudo, Titulo
+            if col_idx in (4, 5):  # Content, Title
                 cell.alignment = wrap
 
     col_widths = [20, 25, 8, 50, 45, 40]
@@ -244,7 +244,7 @@ def _to_export_bibtex(articles: list[Article]) -> str:
         if a.abstract:
             buf.write(f"  abstract = {{{_bib_escape(a.abstract)}}},\n")
         if a.citations:
-            buf.write(f"  note     = {{Citacoes: {a.citations}}},\n")
+            buf.write(f"  note     = {{Cited by: {a.citations}}},\n")
         buf.write("}\n\n")
     return buf.getvalue()
 
@@ -252,7 +252,7 @@ def _to_export_bibtex(articles: list[Article]) -> str:
 # ── selection helpers ─────────────────────────────────────────────────────────
 
 def _hide_key(article: Article) -> str:
-    """Chave estavel para ocultar: DOI ou hash do titulo (independente de posicao)."""
+    """Stable hide key: DOI, or a hash of the title (position-independent)."""
     if article.doi:
         return article.doi
     return f"notitle_{abs(hash(article.title or ''))}"
@@ -278,30 +278,30 @@ def _retractions_sidebar() -> None:
     with st.sidebar:
         st.subheader("Retraction Watch")
         if not retractions.is_cache_present():
-            st.caption("Lista de retratacoes nao baixada (~64 MB).")
-            if st.button("Baixar agora", key="btn_dl_retractions", use_container_width=True):
-                with st.spinner("Baixando lista de retratacoes (pode levar ate 1 min)..."):
+            st.caption("Retraction list not downloaded (~64 MB).")
+            if st.button("Download now", key="btn_dl_retractions", use_container_width=True):
+                with st.spinner("Downloading retraction list (may take up to 1 min)..."):
                     try:
                         size = retractions.download()
-                        st.success(f"Baixado ({size // 1024 // 1024} MB).")
+                        st.success(f"Downloaded ({size // 1024 // 1024} MB).")
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"Falha no download: {exc}")
+                        st.error(f"Download failed: {exc}")
         else:
             age = retractions.cache_age_days() or 0
             n_dois = len(retractions.get_retracted_dois())
             stale = age >= 7
-            st.caption(f"{n_dois:,} DOIs cadastrados | atualizado ha {age:.1f} dia(s)")
+            st.caption(f"{n_dois:,} DOIs indexed | updated {age:.1f} day(s) ago")
             if stale:
-                st.warning("Lista desatualizada (>7 dias).")
-            if st.button("Atualizar lista", key="btn_refresh_retractions", use_container_width=True):
-                with st.spinner("Atualizando..."):
+                st.warning("List is out of date (>7 days).")
+            if st.button("Refresh list", key="btn_refresh_retractions", use_container_width=True):
+                with st.spinner("Refreshing..."):
                     try:
                         retractions.download()
-                        st.success("Lista atualizada.")
+                        st.success("List updated.")
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"Falha: {exc}")
+                        st.error(f"Failed: {exc}")
 
 
 def _app() -> None:
@@ -325,56 +325,56 @@ def _app() -> None:
     if "total_dedup" not in st.session_state:
         st.session_state.total_dedup = 0
 
-    tab_busca, tab_export, tab_ocultos = st.tabs(["Busca", "Exportar", "Ocultos"])
+    tab_search, tab_export, tab_hidden = st.tabs(["Search", "Export", "Hidden"])
 
-    # ── constantes de filtro ──────────────────────────────────────────────────
+    # ── filter constants ──────────────────────────────────────────────────
     _ALL_SOURCES = ["openalex", "elsevier", "ieee", "semanticscholar"]
     _ALL_TYPES = ["journal", "conference", "repository", "book", "other"]
     _TYPE_LABELS = {
         "journal": "Journal",
         "conference": "Conference",
-        "repository": "Repositorio (preprint)",
-        "book": "Livro / Capitulo",
-        "other": "Outro",
+        "repository": "Repository (preprint)",
+        "book": "Book / Chapter",
+        "other": "Other",
     }
 
-    # ── aba Busca ─────────────────────────────────────────────────────────────
-    with tab_busca:
+    # ── Search tab ─────────────────────────────────────────────────────────────
+    with tab_search:
 
-        # ── filtros (sempre visiveis, antes da busca) ─────────────────────────
-        with st.expander("Filtros de busca", expanded=False):
+        # ── filters (always visible, applied before the search) ─────────────────────────
+        with st.expander("Search filters", expanded=False):
             f_col1, f_col2 = st.columns(2)
             with f_col1:
                 f_year_from = st.number_input(
-                    "Ano a partir de", min_value=1900, max_value=2100,
-                    value=None, placeholder="qualquer", key="filter_year_from",
+                    "Year from", min_value=1900, max_value=2100,
+                    value=None, placeholder="any", key="filter_year_from",
                 )
                 f_year_to = st.number_input(
-                    "Ano ate", min_value=1900, max_value=2100,
-                    value=None, placeholder="qualquer", key="filter_year_to",
+                    "Year to", min_value=1900, max_value=2100,
+                    value=None, placeholder="any", key="filter_year_to",
                 )
-                f_oa = st.checkbox("Somente Open Access", key="filter_oa")
+                f_oa = st.checkbox("Open Access only", key="filter_oa")
                 f_cluster = st.checkbox(
-                    "Agrupar por topico",
+                    "Group by topic",
                     key="filter_cluster",
-                    help="K-means sobre os embeddings dos resultados; rotulo via top palavras dos titulos.",
+                    help="K-means over the result embeddings; label derived from the top title words.",
                 )
             with f_col2:
                 f_sources = st.multiselect(
-                    "Fontes a consultar",
+                    "Sources to query",
                     options=_ALL_SOURCES,
                     default=_ALL_SOURCES,
                     key="filter_sources",
                 )
                 f_types = st.multiselect(
-                    "Tipo de publicacao",
+                    "Publication type",
                     options=_ALL_TYPES,
                     default=_ALL_TYPES,
                     format_func=lambda t: _TYPE_LABELS.get(t, t),
                     key="filter_types",
                 )
 
-        # Contar filtros nao-padrao para mostrar badge
+        # Count non-default filters so the badge can be shown
         n_active = sum([
             f_year_from is not None,
             f_year_to is not None,
@@ -387,15 +387,15 @@ def _app() -> None:
             st.session_state.query_input = value
 
         query = st.text_input(
-            "Termo de busca",
-            placeholder="ex: machine learning transformers",
+            "Search term",
+            placeholder="e.g. machine learning transformers",
             key="query_input",
         )
 
-        # ── historico de buscas (pills clicaveis) ─────────────────────────────
+        # ── search history (clickable pills) ─────────────────────────────
         recent = list_recent_queries(limit=8)
         if recent:
-            st.caption("Buscas recentes (clique para reusar):")
+            st.caption("Recent searches (click to reuse):")
             cols = st.columns(min(len(recent), 4))
             for i, rq in enumerate(recent):
                 with cols[i % len(cols)]:
@@ -409,31 +409,31 @@ def _app() -> None:
 
         col_lim, col_btn, col_refresh = st.columns([3, 1, 1])
         with col_lim:
-            limit = st.slider("Limite de resultados", min_value=5, max_value=50, value=10)
+            limit = st.slider("Result limit", min_value=5, max_value=50, value=10)
         with col_btn:
             st.write("")
-            search_clicked = st.button("Buscar", use_container_width=True)
+            search_clicked = st.button("Search", use_container_width=True)
         with col_refresh:
             st.write("")
             refresh_clicked = st.button(
-                "Atualizar",
+                "Refresh",
                 use_container_width=True,
-                help="Invalida o cache desta query e busca de novo nas APIs.",
+                help="Invalidate the cache for this query and re-query the APIs.",
             )
 
         if n_active:
-            st.info(f"{n_active} filtro(s) ativo(s) — a busca sera realizada ja com esses filtros aplicados.")
+            st.info(f"{n_active} active filter(s) — the search will run with these already applied.")
 
         if refresh_clicked and query.strip():
             removed = cache_invalidate(query.strip())
-            st.toast(f"Cache invalidado ({removed} entrada(s)). Buscando de novo...")
-            search_clicked = True  # cai no fluxo de busca abaixo
+            st.toast(f"Cache invalidated ({removed} entry/entries). Searching again...")
+            search_clicked = True  # falls through into the search flow below
 
         if search_clicked:
             if not query.strip():
-                st.warning("Digite um termo de busca.")
+                st.warning("Enter a search term.")
             else:
-                with st.spinner("Buscando..."):
+                with st.spinner("Searching..."):
                     try:
                         active_sources = set(f_sources) if f_sources else set(_ALL_SOURCES)
                         results, from_cache, failed, errors, total_raw, total_dedup = _fetch(
@@ -451,7 +451,7 @@ def _app() -> None:
                         st.session_state.search_error = None
                     except httpx.TimeoutException:
                         st.session_state.results = []
-                        st.session_state.search_error = "Tempo de resposta excedido. Verifique sua conexao e tente novamente."
+                        st.session_state.search_error = "Request timed out. Check your connection and try again."
                     except Exception as exc:
                         st.session_state.results = []
                         st.session_state.search_error = str(exc)
@@ -461,10 +461,10 @@ def _app() -> None:
                         for k in list(st.session_state.keys()):
                             if k.startswith("sel_"):
                                 del st.session_state[k]
-                # Força novo script run limpo antes de renderizar os checkboxes.
-                # Sem isso, o Streamlit pode reutilizar o estado interno do widget
-                # anterior para o primeiro artigo (mesma chave no run anterior),
-                # causando dessincronizacao apenas no primeiro item da lista.
+                # Force a clean script run before rendering the checkboxes.
+                # Without it Streamlit may reuse the previous run's internal widget
+                # state for the first article (same key as the previous run),
+                # desynchronizing only the first item in the list.
                 st.rerun()
 
         if st.session_state.search_done:
@@ -473,7 +473,7 @@ def _app() -> None:
             else:
                 results: list[Article] = st.session_state.results
 
-                # aplicar filtros pos-fetch (ano, tipo, oa) sobre o pool completo
+                # apply post-fetch filters (year, type, OA) over the full pool
                 def _apply_filters(articles: list[Article]) -> list[Article]:
                     out = []
                     for a in articles:
@@ -491,19 +491,19 @@ def _app() -> None:
                 filtered = _apply_filters(results)
                 sliced = filtered[:limit]
 
-                # Falhas de provedor aparecem independentemente de haver resultados,
-                # para que uma queda total nao se disfarce de "nenhum resultado".
+                # Provider failures surface regardless of result count, so a full
+                # outage never disguises itself as "no results".
                 failed = st.session_state.get("failed_providers") or []
                 if failed:
                     errors = st.session_state.get("provider_errors") or {}
-                    lines = [f"**{p}**: {errors.get(p, 'erro desconhecido')}" for p in failed]
+                    lines = [f"**{p}**: {errors.get(p, 'unknown error')}" for p in failed]
                     st.warning(
-                        "Provedores indisponiveis nesta busca (resultados parciais):\n\n"
+                        "Providers unavailable for this search (partial results):\n\n"
                         + "\n\n".join(lines)
                     )
 
                 if not sliced:
-                    st.warning("Nenhum resultado encontrado com os filtros atuais.")
+                    st.warning("No results found with the current filters.")
                 else:
                     # ── header: count + export CSV ────────────────────────────────────────
                     header_col, export_col = st.columns([4, 1])
@@ -512,22 +512,22 @@ def _app() -> None:
                         total_raw = st.session_state.get("total_raw", 0)
                         total_dedup = st.session_state.get("total_dedup", len(results))
                         n = len(sliced)
-                        # Limite e o teto exibido. O detalhe (candidatos avaliados e
-                        # duplicatas removidas) so aparece em busca fresca, nao no cache.
+                        # The limit caps what is displayed. The detail (candidates
+                        # evaluated, duplicates removed) only shows on a fresh search.
                         if total_raw and not st.session_state.get("from_cache"):
                             dupes = max(total_raw - total_dedup, 0)
-                            extra = f", {dupes} duplicata(s) removida(s)" if dupes else ""
-                            st.caption(f"{n} artigo(s) encontrados, {total_raw} candidato(s) avaliado(s){extra}  ({origin})")
+                            extra = f", {dupes} duplicate(s) removed" if dupes else ""
+                            st.caption(f"{n} article(s) found, {total_raw} candidate(s) evaluated{extra}  ({origin})")
                         else:
-                            st.caption(f"{n} artigo(s) encontrados  ({origin})")
+                            st.caption(f"{n} article(s) found  ({origin})")
                         hidden_count = st.session_state.get("hidden_count", 0)
                         if hidden_count:
-                            st.caption(f"{hidden_count} artigo(s) oculto(s) nesta busca")
+                            st.caption(f"{hidden_count} article(s) hidden in this search")
                     with export_col:
                         st.download_button(
-                            label="Exportar CSV",
+                            label="Export CSV",
                             data=_to_csv_bytes(sliced),
-                            file_name="resultados.csv",
+                            file_name="results.csv",
                             mime="text/csv",
                             use_container_width=True,
                         )
@@ -536,14 +536,14 @@ def _app() -> None:
                     selected = st.session_state.selected
                     sel_info_col, sel_btn_col = st.columns([4, 1])
                     with sel_info_col:
-                        st.caption(f"{len(selected)} artigo(s) selecionado(s)")
+                        st.caption(f"{len(selected)} article(s) selected")
                     with sel_btn_col:
                         if selected:
-                            if st.button("Limpar selecao", key="btn_clear_selection", use_container_width=True):
+                            if st.button("Clear selection", key="btn_clear_selection", use_container_width=True):
                                 _clear_selection()
                                 st.rerun()
 
-                    # ── article cards (agrupados por topico se f_cluster) ─────────────
+                    # ── article cards (grouped by topic when f_cluster) ─────────────
                     if f_cluster:
                         groups = cluster_articles(sliced)
                     else:
@@ -561,17 +561,17 @@ def _app() -> None:
                             with st.container(border=True):
                                 title_col, sel_col, hide_col = st.columns([6, 2, 1])
                                 with title_col:
-                                    title = a.title or "(sem titulo)"
+                                    title = a.title or "(untitled)"
                                     link = _article_link(a)
-                                    prefix = ":red[**[RETRATADO]**] " if a.retracted else ""
+                                    prefix = ":red[**[RETRACTED]**] " if a.retracted else ""
                                     if link:
                                         st.markdown(f"{prefix}**{i}. [{title}]({link})**")
                                     else:
                                         st.markdown(f"{prefix}**{i}. {title}**")
                                 with sel_col:
-                                    is_checked = st.checkbox("Selecionar", key=cb_key)
+                                    is_checked = st.checkbox("Select", key=cb_key)
                                 with hide_col:
-                                    if st.button("Ocultar", key=f"hide_{article_key}"):
+                                    if st.button("Hide", key=f"hide_{article_key}"):
                                         hide_article(hide_key, a.title or "")
                                         st.session_state.results = [
                                             r for r in st.session_state.results
@@ -581,7 +581,7 @@ def _app() -> None:
                                         st.session_state.pop(cb_key, None)
                                         st.rerun()
 
-                                # Sync checkbox state → selected dict
+                                # Sync checkbox state -> selected dict
                                 if is_checked:
                                     st.session_state.selected[article_key] = a
                                 else:
@@ -596,53 +596,53 @@ def _app() -> None:
                                         st.caption(meta)
                                 with right:
                                     st.caption(f"Score: {a.score:.3f}")
-                                    st.caption(f"Citacoes: {a.citations}  |  [{a.source}]")
+                                    st.caption(f"Cited by: {a.citations}  |  [{a.source}]")
 
-                                with st.expander("Detalhes", expanded=False):
+                                with st.expander("Details", expanded=False):
                                     if a.venue_type:
-                                        st.write(f"Tipo de publicacao: {a.venue_type}")
+                                        st.write(f"Publication type: {a.venue_type}")
                                     if a.publisher:
-                                        st.write(f"Editora: {a.publisher}")
+                                        st.write(f"Publisher: {a.publisher}")
                                     if a.is_oa is not None:
-                                        st.write(f"Acesso aberto: {'Sim' if a.is_oa else 'Nao'}")
+                                        st.write(f"Open access: {'Yes' if a.is_oa else 'No'}")
                                     if a.oa_url:
-                                        st.link_button("Acessar versao aberta", a.oa_url)
+                                        st.link_button("Open access version", a.oa_url)
                                     if a.concepts:
-                                        st.write(f"Topicos: {' | '.join(a.concepts)}")
+                                        st.write(f"Topics: {' | '.join(a.concepts)}")
                                     if a.abstract:
                                         st.caption(a.abstract)
                                     else:
-                                        st.caption("Abstract nao disponivel")
+                                        st.caption("Abstract not available")
 
                     if st.session_state.selected:
                         st.divider()
                         st.info(
-                            f"{len(st.session_state.selected)} artigo(s) selecionado(s). "
-                            "Va para a aba **Exportar** para baixar em TSV, xlsx ou BibTeX."
+                            f"{len(st.session_state.selected)} article(s) selected. "
+                            "Go to the **Export** tab to download as TSV, xlsx or BibTeX."
                         )
 
-    # ── aba Exportar ──────────────────────────────────────────────────────────
+    # ── Export tab ──────────────────────────────────────────────────────────
     with tab_export:
         selected_list = list(st.session_state.selected.values())
 
         if not selected_list:
-            st.warning("Nenhum artigo selecionado. Volte a aba Busca e marque os artigos.")
+            st.warning("No articles selected. Go back to the Search tab and tick some articles.")
         else:
             n = len(selected_list)
-            st.write(f"{n} artigo(s) selecionado(s) para exportacao")
+            st.write(f"{n} article(s) selected for export")
 
-            ocultar_apos = st.checkbox(
-                "Ocultar artigos selecionados apos exportar",
+            hide_after = st.checkbox(
+                "Hide selected articles after exporting",
                 value=True,
-                key="ocultar_apos_export",
+                key="hide_after_export",
             )
 
             fmt = st.radio(
-                "Formato de exportacao",
+                "Export format",
                 [
-                    "TSV para Excel (colar direto na planilha)",
-                    "Arquivo .xlsx (download direto)",
-                    "BibTeX para Overleaf (.bib)",
+                    "TSV for Excel (paste straight into a sheet)",
+                    ".xlsx file (direct download)",
+                    "BibTeX for Overleaf (.bib)",
                 ],
             )
 
@@ -652,84 +652,84 @@ def _app() -> None:
                 for article in selected_list:
                     hide_article(_hide_key(article), article.title or "")
                 st.session_state.selected = {}
-                st.info("Artigos exportados foram marcados como ocultos.")
+                st.info("Exported articles have been marked as hidden.")
 
-            if fmt == "TSV para Excel (colar direto na planilha)":
-                st.write("Copie o texto abaixo e cole na primeira linha vazia da sua planilha")
+            if fmt == "TSV for Excel (paste straight into a sheet)":
+                st.write("Copy the text below and paste it into the first empty row of your sheet")
                 st.text_area(
-                    label="TSV para colar na planilha",
+                    label="TSV to paste into a spreadsheet",
                     value=_to_ref_tsv(selected_list),
                     height=200,
                     key="tsv_output",
                     label_visibility="collapsed",
                 )
                 st.caption(
-                    "O campo Conteudo e o abstract original. Revise e adapte para o "
-                    "seu resumo em portugues antes de colar na planilha."
+                    "The Content column holds the original abstract. Review and adapt it "
+                    "before pasting into your sheet."
                 )
-                if ocultar_apos:
-                    if st.button("Confirmar exportacao e ocultar artigos", key="btn_hide_tsv"):
+                if hide_after:
+                    if st.button("Confirm export and hide articles", key="btn_hide_tsv"):
                         _do_hide_selected()
                         st.rerun()
 
-            elif fmt == "Arquivo .xlsx (download direto)":
+            elif fmt == ".xlsx file (direct download)":
                 xlsx_clicked = st.download_button(
-                    label="Baixar .xlsx",
+                    label="Download .xlsx",
                     data=_to_ref_xlsx(selected_list),
-                    file_name="referencias_academicas.xlsx",
+                    file_name="academic_references.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-                if xlsx_clicked and ocultar_apos:
+                if xlsx_clicked and hide_after:
                     _do_hide_selected()
                     st.rerun()
 
             else:  # BibTeX
                 bib = _to_export_bibtex(selected_list)
-                st.write("Copie e cole no seu arquivo .bib no Overleaf ou Zotero")
+                st.write("Copy and paste into your .bib file in Overleaf or Zotero")
                 st.code(bib, language=None)
                 bib_clicked = st.download_button(
-                    label="Baixar referencias.bib",
+                    label="Download references.bib",
                     data=bib.encode("utf-8"),
-                    file_name="referencias.bib",
+                    file_name="references.bib",
                     mime="text/plain",
                 )
-                if bib_clicked and ocultar_apos:
+                if bib_clicked and hide_after:
                     _do_hide_selected()
                     st.rerun()
 
-    # ── aba Ocultos ───────────────────────────────────────────────────────────
-    with tab_ocultos:
-        ocultos = get_hidden_articles()
-        total_hidden = len(ocultos)
+    # ── Hidden tab ───────────────────────────────────────────────────────────
+    with tab_hidden:
+        hidden_entries = get_hidden_articles()
+        total_hidden = len(hidden_entries)
 
-        if not ocultos:
-            st.info("Nenhum artigo oculto.")
+        if not hidden_entries:
+            st.info("No hidden articles.")
         else:
             top_col, sweep_col, btn_col = st.columns([3, 1, 1])
             with top_col:
-                st.write(f"{total_hidden} artigo(s) oculto(s)")
+                st.write(f"{total_hidden} hidden article(s)")
                 if total_hidden >= 100:
-                    st.warning(f"{total_hidden} artigos ocultos. Use 'Limpar antigos' para remover os de mais de 90 dias.")
+                    st.warning(f"{total_hidden} hidden articles. Use 'Clear old' to remove those older than 90 days.")
             with sweep_col:
-                if st.button("Limpar antigos (90d)", key="btn_sweep_hidden", use_container_width=True):
+                if st.button("Clear old (90d)", key="btn_sweep_hidden", use_container_width=True):
                     removed = sweep_hidden(days=90)
-                    st.toast(f"{removed} artigo(s) removido(s).")
+                    st.toast(f"{removed} article(s) removed.")
                     st.rerun()
             with btn_col:
-                if st.button("Limpar todos", key="btn_clear_hidden", use_container_width=True):
+                if st.button("Clear all", key="btn_clear_hidden", use_container_width=True):
                     clear_hidden()
                     st.rerun()
 
-            for entry in ocultos:
+            for entry in hidden_entries:
                 title_display = (entry["title"] or entry["doi"])[:80]
                 hidden_at = entry.get("hidden_at")
                 row_col, restore_col = st.columns([5, 1])
                 with row_col:
                     st.write(title_display)
                     if hidden_at:
-                        st.caption(f"Oculto em {hidden_at.strftime('%d/%m/%Y')}")
+                        st.caption(f"Hidden on {hidden_at.strftime('%Y-%m-%d')}")
                 with restore_col:
-                    if st.button("Restaurar", key=f"restore_{entry['doi']}"):
+                    if st.button("Restore", key=f"restore_{entry['doi']}"):
                         unhide_article(entry["doi"])
                         st.rerun()
 
@@ -737,18 +737,18 @@ def _app() -> None:
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    """Usado pelo script `academic-web` para iniciar o servidor Streamlit."""
+    """Used by the `academic-web` script to start the Streamlit server."""
     subprocess.run(
         [sys.executable, "-m", "streamlit", "run", __file__],
         check=True,
     )
 
 
-# Streamlit re-executa este arquivo a cada interacao do usuario.
-# O guard garante que _app() so roda dentro de uma sessao Streamlit ativa,
-# evitando erros quando o modulo e importado pelo script `academic-web`.
-# IMPORTANTE: capturamos apenas ImportError (esperado fora do contexto Streamlit).
-# Erros dentro de _app() devem propagar para nao serem silenciados.
+# Streamlit re-executes this file on every user interaction.
+# The guard ensures _app() only runs inside an active Streamlit session,
+# avoiding errors when the module is imported by the `academic-web` script.
+# IMPORTANT: only ImportError is caught (expected outside a Streamlit context).
+# Errors raised inside _app() must propagate rather than be silenced.
 try:
     from streamlit.runtime.scriptrunner import get_script_run_ctx as _get_ctx
 except ImportError:
