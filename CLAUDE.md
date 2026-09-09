@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install dependencies (editable mode)
-uv pip install -e .
+# Install dependencies (creates/syncs .venv from uv.lock)
+uv sync
 
 # Run the CLI — the `main` subcommand is required (the Typer app also exposes
 # `clear-cache` and `refresh-retractions`).
@@ -87,7 +87,7 @@ SQLite via SQLAlchemy. TTL 24h, keyed by `query` string. Stores all `Article` fi
 
 ### Web interface (`src/web.py`)
 
-Streamlit single-page app (tabs: **Busca**, **Exportar**, **Ocultos**). Key design constraints:
+Streamlit single-page app (tabs: **Search**, **Export**, **Hidden**). All UI strings are English. Key design constraints:
 - All search results are persisted in `st.session_state.results` — never re-fetch on widget events.
 - Selected articles are persisted in `st.session_state.selected` (dict keyed by DOI or position index).
 - Checkboxes use `sel_<key>` prefix in `st.session_state` so they can be cleared atomically.
@@ -95,7 +95,7 @@ Streamlit single-page app (tabs: **Busca**, **Exportar**, **Ocultos**). Key desi
 - `query_input` is widget-bound: never assign to it after the `st.text_input` is created. The recent-search buttons mutate it via an `on_click` callback (`_set_query_from_recent`), which runs before widgets instantiate.
 - Provider failures are surfaced regardless of result count, so a full outage never looks like "no results for your filters".
 
-Current features: search form with filters (year range, source, venue type, Open Access), recent-search shortcuts, optional topic clustering, ranked result cards with `st.expander("Detalhes")`, per-card checkbox selection and hide, retraction flagging, CSV export of the shown results, an **Exportar** tab (TSV / xlsx / BibTeX), and an **Ocultos** tab to restore hidden articles. The slider caps the displayed list.
+Current features: search form with filters (year range, source, venue type, Open Access), recent-search shortcuts, optional topic clustering, ranked result cards with `st.expander("Details")`, per-card checkbox selection and hide, retraction flagging, CSV export of the shown results, an **Export** tab (TSV / xlsx / BibTeX), and a **Hidden** tab to restore hidden articles. The slider caps the displayed list.
 
 ### Environment
 
@@ -109,6 +109,11 @@ Optional:
 - `OPENALEX_EMAIL` — joins the OpenAlex polite pool (better rate limits)
 - `HTTPX_VERIFY_SSL=false` — disable SSL verification for corporate proxies with self-signed certs
 - `CACHE_DB` — path for the SQLite cache file (default: `academic_cache.db`)
+
+All outbound HTTP goes through `src/utils.py`: `http_get()` (async, used by every
+provider) and `http_get_sync()` (blocking, used by the Retraction Watch download).
+Both honour `HTTPX_VERIFY_SSL` and retry once with verification off on
+`CERTIFICATE_VERIFY_FAILED`. Never call `httpx` directly from a new module.
 
 ## Conventions
 

@@ -1,8 +1,91 @@
 ROADMAP — Academic Search
 =========================
-Atualizado: 2026-05-29 (provider Semantic Scholar + rework do limite)
+Atualizado: 2026-09-09 (rework da documentacao para publico externo)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
+
+========================================
+SESSAO 2026-09-09 — CONCLUIDO
+========================================
+
+[x] README reescrito em ingles e reestruturado para publico externo
+    Motivo: o repo virou portfolio para clientes freelance e vagas. O README
+    antigo era em portugues e organizado para contribuidor, nao para quem
+    decide em 15 segundos se vale ler. Nova ordem: hook de uma linha ->
+    "por que existe" -> screenshot -> "o que e dificil aqui" (dedup
+    cross-provider, ranking ponderado, retratacoes, isolamento de falhas)
+    -> tabela de fontes -> galeria -> instalacao -> uso -> arquitetura.
+
+[x] README.pt-BR.md criado
+    Traducao/espelho do README em ingles, linkado no topo dos dois arquivos.
+    Manter os dois em sincronia ao editar qualquer um.
+
+[x] CONTRIBUTING.md criado
+    Todo o conteudo de "Para quem vai desenvolver" saiu do README: estrutura
+    do projeto, responsabilidade por modulo, fluxo de dados, comandos de dev,
+    convencoes, guia de novo provider, workflow pre-edicao.
+
+[x] Screenshots reais do app web em docs/screenshots/
+    01-search-overview, 02-ranked-results, 03-result-details, 04-filters,
+    05-export-bibtex. Capturadas com o Streamlit rodando local.
+
+[x] main.py removido
+    Stub do `uv init`, sem nenhum import ou referencia no codigo.
+
+[x] Auditoria de segredos no historico do git
+    .env, academic_cache.db e retractions_cache.csv: ignorados e nunca
+    commitados em nenhum commit. So .env.example esta versionado (vazio).
+
+[x] UI e CLI traduzidos para ingles (portfolio)
+    Motivo: o repo e portfolio para clientes de lingua inglesa; screenshots
+    com rotulos em portugues contradiziam o README. web.py (112 strings) e
+    cli.py (22 strings) traduzidos: abas Busca/Exportar/Ocultos -> Search/
+    Export/Hidden, [RETRATADO] -> [RETRACTED], cabecalhos da tabela Rich,
+    labels de filtro, mensagens de erro e comentarios internos.
+    MUDANCA DE SAIDA: cabecalhos do export TSV/xlsx passaram de
+    Revista/Autor/Ano/Conteudo/Titulo/Link para Journal/Author/Year/
+    Content/Title/Link; nomes de arquivo (resultados.csv -> results.csv,
+    referencias.bib -> references.bib) e a nota BibTeX ("Citacoes:" ->
+    "Cited by:") tambem mudaram. Planilhas antigas com cabecalho em
+    portugues precisam ser reajustadas.
+    Variaveis internas renomeadas junto: tab_busca/tab_ocultos ->
+    tab_search/tab_hidden, ocultar_apos -> hide_after, ocultos ->
+    hidden_entries. Label de cluster "Resultados" -> "Results"
+    (test_clustering.py atualizado).
+
+[x] FIX: download do Retraction Watch quebrado atras de proxy corporativo
+    retractions.download() usava httpx.Client cru, sem verify=_VERIFY_SSL e
+    sem o fallback que utils.http_get() tem. Em rede com certificado
+    self-signed falhava sempre com CERTIFICATE_VERIFY_FAILED — a feature de
+    deteccao de retratacoes era inutilizavel nesta maquina.
+    Fix: novo utils.http_get_sync() (mesma logica de fallback do http_get,
+    versao blocking); retractions.download() passou a usa-lo. Validado:
+    63.225 DOIs baixados, e a busca pelo estudo Surgisphere/Lancet marca
+    [RETRACTED] no card. Convencao registrada em CLAUDE.md e CONTRIBUTING.md:
+    nunca chamar httpx direto, sempre via utils.
+
+[x] Screenshot de retratacao capturado
+    docs/screenshots/06-retraction-flag.jpg — estudo Surgisphere/Lancet
+    (Mehra et al., 2020, 1.251 citacoes) sinalizado em vermelho no topo.
+    Todos os 6 screenshots refeitos com a UI ja em ingles.
+
+[x] ruff adicionado ao grupo dev
+    CLAUDE.md e CONTRIBUTING.md documentavam `uv run ruff check src/` mas
+    ruff nao estava em nenhuma dependencia — o comando falhava com
+    "program not found". `uv add --dev ruff` (0.16.6).
+    NOTA: `ruff check src/ tests/` acusa 87 erros PRE-EXISTENTES (60 E501,
+    15 E402, 8 I001, 3 F401, 1 F841). Os E402 em web.py sao intencionais
+    (insercao no sys.path antes dos imports). Nao foram corrigidos nesta
+    sessao — decisao pendente, ver abaixo.
+
+[x] .gitignore: inconsistencia do .vscode resolvida
+    .vscode/settings.json estava versionado apesar de .gitignore listar
+    .vscode/. Resolvido mantendo o arquivo (config util de ruff-on-save
+    compartilhada) e trocando a regra por `.vscode/*` + `!.vscode/settings.json`.
+
+[x] CLAUDE.md alinhado
+    `uv pip install -e .` -> `uv sync` (o que o README manda e o que funciona),
+    nomes das abas em ingles, e a secao de HTTP/SSL compartilhado documentada.
 
 ========================================
 SESSAO 2026-05-29 — CONCLUIDO
@@ -140,6 +223,14 @@ Pendentes:
     - P7 — IEEE API key (externo, nao-codigo)
 
 Pos-mediums vale considerar (nao prioridade):
+    - Lint: 87 erros pre-existentes de ruff (60 E501 linha longa, 8 I001
+      ordem de import, 3 F401 import nao usado, 1 F841 variavel nao usada).
+      Os 15 E402 de web.py sao intencionais — considerar `# noqa: E402` ou
+      per-file-ignores no pyproject para o ruido sumir de vez.
+    - Ranking: busca sem filtro de ano fica dominada por in-press Elsevier
+      (ano+2, 0 citacoes). Investigar cap de recencia para ano > atual.
+    - Manter README.md e README.pt-BR.md em sincronia a cada edicao (nao ha
+      checagem automatica hoje).
     - UI: filtro "Excluir retratados" no expander de filtros
     - CLI: flag --no-retracted equivalente
     - Telemetria: adicionar metric/log para hits de embedding cache (sqlite vs encode)
