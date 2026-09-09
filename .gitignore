@@ -18,8 +18,9 @@ build/
 *.sqlite
 retractions_cache.csv
 
-# VS Code
-.vscode/
+# VS Code - settings.json is tracked on purpose (shared ruff config)
+.vscode/*
+!.vscode/settings.json
 
 # OS
 Thumbs.db
