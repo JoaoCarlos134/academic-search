@@ -128,6 +128,6 @@ Both honour `HTTPX_VERIFY_SSL` and retry once with verification off on
 
 ## Roadmap
 
-**Status (2026-10-28): complete, in maintenance only.** The author uses OpenAlex alone and never got Elsevier/IEEE keys (no plan to). Don't propose work that depends on those keys; treat the Elsevier and IEEE providers as untested against live APIs.
+**Status (2026-10-28): complete, in maintenance only.** OpenAlex, Elsevier/Scopus (the author has a working institutional key) and Semantic Scholar are in use. There is no IEEE key: treat the IEEE provider as untested against the live API and don't propose work that depends on it.
 
 The roadmap and changelog live in **`ROADMAP.txt`** (repo root) — read it first and keep it current after each unit of work. Don't maintain a second copy here. Note one discarded idea worth not re-proposing: PT-BR abstract summarization via LLM was evaluated and dropped (hallucination risk once Elsevier abstracts were fixed) — see the DESCARTADAS section there.

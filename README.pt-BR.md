@@ -34,10 +34,10 @@ lista ranqueada e devolve algo que da para colar direto no Excel ou no Overleaf.
 
 ## Fontes
 
-> **Status do projeto (outubro de 2026): concluido.** Na pratica so o OpenAlex (e o
-> Semantic Scholar no nivel anonimo) e usado — o autor nunca obteve chaves da Elsevier
-> ou do IEEE e nao pretende obter. Esses dois provedores estao implementados, mas nao
-> foram testados com chaves reais. A ferramenta atende o que o autor precisa assim.
+> **Status do projeto (outubro de 2026): concluido.** Em uso com OpenAlex,
+> Elsevier/Scopus (chave institucional) e Semantic Scholar. O IEEE Xplore esta
+> implementado, mas nunca rodou com chave real — o autor nao tem uma. Nao ha novas
+> funcionalidades previstas.
 
 | Provedor | Cobertura | Chave necessaria |
 |----------|-----------|------------------|

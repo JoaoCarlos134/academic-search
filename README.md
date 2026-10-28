@@ -34,10 +34,9 @@ list, and hands back something you can paste straight into Excel or Overleaf.
 
 ## Sources
 
-> **Project status (October 2026): complete.** Only OpenAlex (plus Semantic Scholar
-> on its anonymous tier) is used in practice — the author never obtained Elsevier or
-> IEEE keys and doesn't plan to. Those two providers are implemented but untested
-> against live keys. The tool covers its author's needs as it is.
+> **Project status (October 2026): complete.** In use with OpenAlex, Elsevier/Scopus
+> (institutional key) and Semantic Scholar. IEEE Xplore is implemented but has never
+> been run with a real key — the author has none. No new features are planned.
 
 | Provider | Coverage | Key required |
 |----------|----------|--------------|

@@ -4,9 +4,10 @@ Atualizado: 2026-09-09 (rework da documentacao para publico externo)
 
 LEGENDA: [ ] pendente  [x] concluido  [-] em progresso
 
-STATUS 2026-10-28: PROJETO CONCLUIDO. Uso real so com o OpenAlex; as chaves
-Elsevier e IEEE nunca foram obtidas e nao serao. Os provedores existem, mas nao
-foram testados com chaves reais. Nada pendente alem de manutencao.
+STATUS 2026-10-28: PROJETO CONCLUIDO. Em uso com OpenAlex, Elsevier/Scopus
+(chave institucional funcionando) e Semantic Scholar. Sem chave do IEEE: o
+provedor existe, mas nunca foi testado com chave real. Nada pendente alem de
+manutencao.
 
 ========================================
 SESSAO 2026-09-09 — CONCLUIDO
