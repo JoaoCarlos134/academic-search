@@ -34,6 +34,11 @@ list, and hands back something you can paste straight into Excel or Overleaf.
 
 ## Sources
 
+> **Project status (October 2026): complete.** Only OpenAlex (plus Semantic Scholar
+> on its anonymous tier) is used in practice — the author never obtained Elsevier or
+> IEEE keys and doesn't plan to. Those two providers are implemented but untested
+> against live keys. The tool covers its author's needs as it is.
+
 | Provider | Coverage | Key required |
 |----------|----------|--------------|
 | **OpenAlex** | ~250M works, open catalogue | None — set `OPENALEX_EMAIL` to join the polite pool |

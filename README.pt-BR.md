@@ -34,6 +34,11 @@ lista ranqueada e devolve algo que da para colar direto no Excel ou no Overleaf.
 
 ## Fontes
 
+> **Status do projeto (outubro de 2026): concluido.** Na pratica so o OpenAlex (e o
+> Semantic Scholar no nivel anonimo) e usado — o autor nunca obteve chaves da Elsevier
+> ou do IEEE e nao pretende obter. Esses dois provedores estao implementados, mas nao
+> foram testados com chaves reais. A ferramenta atende o que o autor precisa assim.
+
 | Provedor | Cobertura | Chave necessaria |
 |----------|-----------|------------------|
 | **OpenAlex** | ~250M trabalhos, catalogo aberto | Nenhuma — defina `OPENALEX_EMAIL` para entrar na polite pool |
